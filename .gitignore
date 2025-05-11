@@ -64,3 +64,14 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.*
+
+# google stuff
+key.json
+
+# sqlx stuff
+.sqlx/
+
+# Added by cargo
+
+/target
