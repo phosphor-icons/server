@@ -96,6 +96,7 @@ async fn main() -> Result<(), std::io::Error> {
                 .service(health_check),
         )
     })
+    .workers(4)
     .bind((url, port))?
     .run()
     .await
