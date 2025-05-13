@@ -62,6 +62,11 @@ async fn main() -> Result<(), std::io::Error> {
 
     let app = app::AppState::init().await?;
     let data = web::Data::new(app);
+    let url = std::env::var("PHOSPHOR_SERVER_URL").expect("PHOSPHOR_SERVER_URL must be set");
+    let port = std::env::var("PHOSPHOR_SERVER_PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse::<u16>()
+        .expect("PHOSPHOR_SERVER_PORT must be a valid u16");
 
     HttpServer::new(move || {
         App::new().app_data(data.clone()).service(
@@ -71,7 +76,7 @@ async fn main() -> Result<(), std::io::Error> {
                 .service(categories),
         )
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind((url, port))?
     .run()
     .await
 }
