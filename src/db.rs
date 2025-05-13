@@ -23,6 +23,12 @@ impl Database {
     }
 
     #[tracing::instrument(level = "info")]
+    pub async fn ping(&self) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info")]
     pub async fn get_icons(&self, query: IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
         let mut builder: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM icons");
         let mut has_clauses = false;

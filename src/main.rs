@@ -50,6 +50,25 @@ async fn categories() -> impl Responder {
     })
 }
 
+#[get("/health")]
+#[tracing::instrument(level = "info")]
+async fn health_check(data: web::Data<app::AppState>) -> impl Responder {
+    #[derive(Serialize, ToSchema)]
+    struct Response {
+        status: String,
+    }
+
+    let db = data.db.lock().unwrap();
+    if let Err(_) = db.ping().await {
+        tracing::error!("Database connection failed");
+        return HttpResponse::InternalServerError().finish();
+    }
+
+    HttpResponse::Ok().json(Response {
+        status: "ok".to_string(),
+    })
+}
+
 #[actix_web::main]
 async fn main() -> Result<(), std::io::Error> {
     dotenvy::dotenv().ok();
@@ -73,7 +92,8 @@ async fn main() -> Result<(), std::io::Error> {
             web::scope("/v1")
                 .service(all_icons)
                 .service(search_icons)
-                .service(categories),
+                .service(categories)
+                .service(health_check),
         )
     })
     .bind((url, port))?
