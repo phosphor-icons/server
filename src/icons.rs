@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, FromRow, Row};
 
@@ -26,10 +28,10 @@ impl FromRow<'_, PgRow> for Icon {
         let name: String = row.try_get("name")?;
 
         let status: String = row.try_get("status")?;
-        let status: IconStatus = status.into();
+        let status = IconStatus::from_str(&status).unwrap_or(IconStatus::None);
 
         let category: String = row.try_get("category")?;
-        let category: IconCategory = category.into();
+        let category = IconCategory::from_str(&category).unwrap_or(IconCategory::Unknown);
 
         let search_categories: Vec<String> = row.try_get("search_categories")?;
         let search_categories: Vec<IconSearchCategory> =
@@ -76,15 +78,28 @@ pub enum IconStatus {
     None,
 }
 
-impl From<String> for IconStatus {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "Backlog" => IconStatus::Backlog,
-            "Designing" => IconStatus::Designing,
-            "Designed" => IconStatus::Designed,
-            "Implemented" => IconStatus::Implemented,
-            "Deprecated" => IconStatus::Deprecated,
-            _ => IconStatus::None,
+impl IconStatus {
+    pub const COUNT: usize = 6;
+    pub const ALL: [IconStatus; IconStatus::COUNT] = [
+        IconStatus::Backlog,
+        IconStatus::Designing,
+        IconStatus::Designed,
+        IconStatus::Implemented,
+        IconStatus::Deprecated,
+        IconStatus::None,
+    ];
+}
+
+impl FromStr for IconStatus {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Backlog" => Ok(IconStatus::Backlog),
+            "Designing" => Ok(IconStatus::Designing),
+            "Designed" => Ok(IconStatus::Designed),
+            "Implemented" => Ok(IconStatus::Implemented),
+            "Deprecated" => Ok(IconStatus::Deprecated),
+            _ => Ok(IconStatus::None),
         }
     }
 }
@@ -102,7 +117,7 @@ impl std::fmt::Display for IconStatus {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "PascalCase")]
 pub enum IconCategory {
     Arrows,
@@ -135,9 +150,35 @@ pub enum IconCategory {
     Unknown,
 }
 
-impl From<String> for IconCategory {
-    fn from(value: String) -> Self {
-        match value.as_str() {
+impl IconCategory {
+    pub const COUNT: usize = 19;
+    pub const ALL: [IconCategory; IconCategory::COUNT] = [
+        IconCategory::Arrows,
+        IconCategory::Brands,
+        IconCategory::Commerce,
+        IconCategory::Communication,
+        IconCategory::Design,
+        IconCategory::Development,
+        IconCategory::Education,
+        IconCategory::Games,
+        IconCategory::HealthAndWellness,
+        IconCategory::MapsAndTravel,
+        IconCategory::MathAndFinance,
+        IconCategory::Media,
+        IconCategory::OfficeAndEditing,
+        IconCategory::People,
+        IconCategory::SecurityAndWarnings,
+        IconCategory::SystemAndDevices,
+        IconCategory::Time,
+        IconCategory::WeatherAndNature,
+        IconCategory::Unknown,
+    ];
+}
+
+impl FromStr for IconCategory {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let res = match value {
             "Arrows" => IconCategory::Arrows,
             "Brands" => IconCategory::Brands,
             "Commerce" => IconCategory::Commerce,
@@ -157,7 +198,8 @@ impl From<String> for IconCategory {
             "Time" => IconCategory::Time,
             "Weather & Nature" => IconCategory::WeatherAndNature,
             _ => IconCategory::Unknown,
-        }
+        };
+        Ok(res)
     }
 }
 
@@ -187,7 +229,7 @@ impl std::fmt::Display for IconCategory {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "PascalCase")]
 pub enum IconSearchCategory {
     Arrows,
@@ -210,6 +252,31 @@ pub enum IconSearchCategory {
     Weather,
     #[serde(other)]
     Unknown,
+}
+
+impl IconSearchCategory {
+    pub const COUNT: usize = 19;
+    pub const ALL: [IconSearchCategory; IconSearchCategory::COUNT] = [
+        IconSearchCategory::Arrows,
+        IconSearchCategory::Brand,
+        IconSearchCategory::Commerce,
+        IconSearchCategory::Communication,
+        IconSearchCategory::Design,
+        IconSearchCategory::Development,
+        IconSearchCategory::Editor,
+        IconSearchCategory::Finance,
+        IconSearchCategory::Games,
+        IconSearchCategory::Office,
+        IconSearchCategory::Health,
+        IconSearchCategory::Map,
+        IconSearchCategory::Media,
+        IconSearchCategory::Nature,
+        IconSearchCategory::Objects,
+        IconSearchCategory::People,
+        IconSearchCategory::System,
+        IconSearchCategory::Weather,
+        IconSearchCategory::Unknown,
+    ];
 }
 
 impl From<String> for IconSearchCategory {

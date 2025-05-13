@@ -17,6 +17,12 @@ pub struct TableClient {
     client: GoogleApi<TablesServiceClient<GoogleAuthMiddleware>>,
 }
 
+impl std::fmt::Debug for TableClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TableClient").finish()
+    }
+}
+
 pub enum TableColumn {
     Rid,
     Name,
@@ -77,25 +83,35 @@ impl TableClient {
     }
 
     pub async fn sync(&self) -> Result<Vec<Icon>, TableClientError> {
-        let rows = self
-            .client
-            .get()
-            .list_rows(tonic::Request::new(ListRowsRequest {
-                parent: format!("tables/{TABLE_ID}"),
-                page_size: 100,
-                ..Default::default()
-            }))
-            .await?;
+        let mut icons: Vec<Icon> = Vec::new();
+        let mut page_token = "".to_string();
 
-        Ok(rows
-            .into_inner()
-            .rows
-            .iter()
-            .map(|row| {
-                let row = row.clone();
-                Icon::try_from(row).unwrap()
-            })
-            .collect())
+        loop {
+            let rows = self
+                .client
+                .get()
+                .list_rows(tonic::Request::new(ListRowsRequest {
+                    parent: format!("tables/{TABLE_ID}"),
+                    page_size: 1000,
+                    page_token,
+                    ..Default::default()
+                }))
+                .await?;
+
+            let inner = rows.into_inner();
+            page_token = inner.next_page_token;
+
+            for row in inner.rows.into_iter() {
+                let icon = Icon::try_from(row).unwrap();
+                icons.push(icon);
+            }
+
+            if page_token.is_empty() {
+                break;
+            }
+        }
+
+        Ok(icons)
     }
 }
 
