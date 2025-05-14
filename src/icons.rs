@@ -3,22 +3,24 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, FromRow, Row};
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct Icon {
     pub id: i32,
     pub rid: String,
     pub name: String,
+    pub alias: Option<String>,
+    pub code: Option<i32>,
     pub status: IconStatus,
-    pub category: IconCategory,
-    pub search_categories: Vec<IconSearchCategory>,
+    // NOTE: This is the category filter exposed via API
+    pub search_categories: Vec<Category>,
+    // NOTE: This is a Figma category and is not used in the DB query
+    pub category: FigmaCategory,
     pub tags: Vec<String>,
     pub notes: Option<String>,
     pub released_at: Option<f64>,
     pub last_updated_at: Option<f64>,
     pub deprecated_at: Option<f64>,
     pub published: bool,
-    pub alias: Option<String>,
-    pub code: Option<i32>,
 }
 
 impl FromRow<'_, PgRow> for Icon {
@@ -30,12 +32,15 @@ impl FromRow<'_, PgRow> for Icon {
         let status: String = row.try_get("status")?;
         let status = IconStatus::from_str(&status).unwrap_or(IconStatus::None);
 
-        let category: String = row.try_get("category")?;
-        let category = IconCategory::from_str(&category).unwrap_or(IconCategory::Unknown);
+        let figma_category: String = row.try_get("category")?;
+        let figma_category =
+            FigmaCategory::from_str(&figma_category).unwrap_or(FigmaCategory::Unknown);
 
-        let search_categories: Vec<String> = row.try_get("search_categories")?;
-        let search_categories: Vec<IconSearchCategory> =
-            search_categories.into_iter().map(|s| s.into()).collect();
+        let category: Vec<String> = row.try_get("search_categories")?;
+        let category: Vec<Category> = category
+            .into_iter()
+            .map(|s| Category::from_str(&s).unwrap_or(Category::Unknown))
+            .collect();
 
         let tags: Vec<String> = row.try_get("tags")?;
         let notes: Option<String> = row.try_get("notes")?;
@@ -50,22 +55,22 @@ impl FromRow<'_, PgRow> for Icon {
             id,
             rid,
             name,
+            alias,
+            code,
             status,
-            category,
-            search_categories,
+            search_categories: category,
+            category: figma_category,
             tags,
             notes,
             released_at,
             last_updated_at,
             deprecated_at,
             published,
-            alias,
-            code,
         })
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum IconStatus {
     Backlog,
@@ -117,9 +122,9 @@ impl std::fmt::Display for IconStatus {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
 #[serde(rename_all = "PascalCase")]
-pub enum IconCategory {
+pub enum FigmaCategory {
     Arrows,
     Brands,
     Commerce,
@@ -150,88 +155,88 @@ pub enum IconCategory {
     Unknown,
 }
 
-impl IconCategory {
+impl FigmaCategory {
     pub const COUNT: usize = 19;
-    pub const ALL: [IconCategory; IconCategory::COUNT] = [
-        IconCategory::Arrows,
-        IconCategory::Brands,
-        IconCategory::Commerce,
-        IconCategory::Communication,
-        IconCategory::Design,
-        IconCategory::Development,
-        IconCategory::Education,
-        IconCategory::Games,
-        IconCategory::HealthAndWellness,
-        IconCategory::MapsAndTravel,
-        IconCategory::MathAndFinance,
-        IconCategory::Media,
-        IconCategory::OfficeAndEditing,
-        IconCategory::People,
-        IconCategory::SecurityAndWarnings,
-        IconCategory::SystemAndDevices,
-        IconCategory::Time,
-        IconCategory::WeatherAndNature,
-        IconCategory::Unknown,
+    pub const ALL: [FigmaCategory; FigmaCategory::COUNT] = [
+        FigmaCategory::Arrows,
+        FigmaCategory::Brands,
+        FigmaCategory::Commerce,
+        FigmaCategory::Communication,
+        FigmaCategory::Design,
+        FigmaCategory::Development,
+        FigmaCategory::Education,
+        FigmaCategory::Games,
+        FigmaCategory::HealthAndWellness,
+        FigmaCategory::MapsAndTravel,
+        FigmaCategory::MathAndFinance,
+        FigmaCategory::Media,
+        FigmaCategory::OfficeAndEditing,
+        FigmaCategory::People,
+        FigmaCategory::SecurityAndWarnings,
+        FigmaCategory::SystemAndDevices,
+        FigmaCategory::Time,
+        FigmaCategory::WeatherAndNature,
+        FigmaCategory::Unknown,
     ];
 }
 
-impl FromStr for IconCategory {
+impl FromStr for FigmaCategory {
     type Err = String;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let res = match value {
-            "Arrows" => IconCategory::Arrows,
-            "Brands" => IconCategory::Brands,
-            "Commerce" => IconCategory::Commerce,
-            "Communication" => IconCategory::Communication,
-            "Design" => IconCategory::Design,
-            "Development" => IconCategory::Development,
-            "Education" => IconCategory::Education,
-            "Games" => IconCategory::Games,
-            "Health & Wellness" => IconCategory::HealthAndWellness,
-            "Maps & Travel" => IconCategory::MapsAndTravel,
-            "Math & Finance" => IconCategory::MathAndFinance,
-            "Media" => IconCategory::Media,
-            "Office & Editing" => IconCategory::OfficeAndEditing,
-            "People" => IconCategory::People,
-            "Security & Warnings" => IconCategory::SecurityAndWarnings,
-            "System & Devices" => IconCategory::SystemAndDevices,
-            "Time" => IconCategory::Time,
-            "Weather & Nature" => IconCategory::WeatherAndNature,
-            _ => IconCategory::Unknown,
+            "Arrows" => FigmaCategory::Arrows,
+            "Brands" => FigmaCategory::Brands,
+            "Commerce" => FigmaCategory::Commerce,
+            "Communication" => FigmaCategory::Communication,
+            "Design" => FigmaCategory::Design,
+            "Development" => FigmaCategory::Development,
+            "Education" => FigmaCategory::Education,
+            "Games" => FigmaCategory::Games,
+            "Health & Wellness" => FigmaCategory::HealthAndWellness,
+            "Maps & Travel" => FigmaCategory::MapsAndTravel,
+            "Math & Finance" => FigmaCategory::MathAndFinance,
+            "Media" => FigmaCategory::Media,
+            "Office & Editing" => FigmaCategory::OfficeAndEditing,
+            "People" => FigmaCategory::People,
+            "Security & Warnings" => FigmaCategory::SecurityAndWarnings,
+            "System & Devices" => FigmaCategory::SystemAndDevices,
+            "Time" => FigmaCategory::Time,
+            "Weather & Nature" => FigmaCategory::WeatherAndNature,
+            _ => FigmaCategory::Unknown,
         };
         Ok(res)
     }
 }
 
-impl std::fmt::Display for IconCategory {
+impl std::fmt::Display for FigmaCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IconCategory::Arrows => write!(f, "Arrows"),
-            IconCategory::Brands => write!(f, "Brands"),
-            IconCategory::Commerce => write!(f, "Commerce"),
-            IconCategory::Communication => write!(f, "Communication"),
-            IconCategory::Design => write!(f, "Design"),
-            IconCategory::Development => write!(f, "Development"),
-            IconCategory::Education => write!(f, "Education"),
-            IconCategory::Games => write!(f, "Games"),
-            IconCategory::HealthAndWellness => write!(f, "Health & Wellness"),
-            IconCategory::MapsAndTravel => write!(f, "Maps & Travel"),
-            IconCategory::MathAndFinance => write!(f, "Math & Finance"),
-            IconCategory::Media => write!(f, "Media"),
-            IconCategory::OfficeAndEditing => write!(f, "Office & Editing"),
-            IconCategory::People => write!(f, "People"),
-            IconCategory::SecurityAndWarnings => write!(f, "Security & Warnings"),
-            IconCategory::SystemAndDevices => write!(f, "System & Devices"),
-            IconCategory::Time => write!(f, "Time"),
-            IconCategory::WeatherAndNature => write!(f, "Weather & Nature"),
-            IconCategory::Unknown => write!(f, "Unknown"),
+            FigmaCategory::Arrows => write!(f, "Arrows"),
+            FigmaCategory::Brands => write!(f, "Brands"),
+            FigmaCategory::Commerce => write!(f, "Commerce"),
+            FigmaCategory::Communication => write!(f, "Communication"),
+            FigmaCategory::Design => write!(f, "Design"),
+            FigmaCategory::Development => write!(f, "Development"),
+            FigmaCategory::Education => write!(f, "Education"),
+            FigmaCategory::Games => write!(f, "Games"),
+            FigmaCategory::HealthAndWellness => write!(f, "Health & Wellness"),
+            FigmaCategory::MapsAndTravel => write!(f, "Maps & Travel"),
+            FigmaCategory::MathAndFinance => write!(f, "Math & Finance"),
+            FigmaCategory::Media => write!(f, "Media"),
+            FigmaCategory::OfficeAndEditing => write!(f, "Office & Editing"),
+            FigmaCategory::People => write!(f, "People"),
+            FigmaCategory::SecurityAndWarnings => write!(f, "Security & Warnings"),
+            FigmaCategory::SystemAndDevices => write!(f, "System & Devices"),
+            FigmaCategory::Time => write!(f, "Time"),
+            FigmaCategory::WeatherAndNature => write!(f, "Weather & Nature"),
+            FigmaCategory::Unknown => write!(f, "Unknown"),
         }
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
 #[serde(rename_all = "PascalCase")]
-pub enum IconSearchCategory {
+pub enum Category {
     Arrows,
     Brand,
     Commerce,
@@ -254,79 +259,81 @@ pub enum IconSearchCategory {
     Unknown,
 }
 
-impl IconSearchCategory {
+impl Category {
     pub const COUNT: usize = 19;
-    pub const ALL: [IconSearchCategory; IconSearchCategory::COUNT] = [
-        IconSearchCategory::Arrows,
-        IconSearchCategory::Brand,
-        IconSearchCategory::Commerce,
-        IconSearchCategory::Communication,
-        IconSearchCategory::Design,
-        IconSearchCategory::Development,
-        IconSearchCategory::Editor,
-        IconSearchCategory::Finance,
-        IconSearchCategory::Games,
-        IconSearchCategory::Office,
-        IconSearchCategory::Health,
-        IconSearchCategory::Map,
-        IconSearchCategory::Media,
-        IconSearchCategory::Nature,
-        IconSearchCategory::Objects,
-        IconSearchCategory::People,
-        IconSearchCategory::System,
-        IconSearchCategory::Weather,
-        IconSearchCategory::Unknown,
+    pub const ALL: [Category; Category::COUNT] = [
+        Category::Arrows,
+        Category::Brand,
+        Category::Commerce,
+        Category::Communication,
+        Category::Design,
+        Category::Development,
+        Category::Editor,
+        Category::Finance,
+        Category::Games,
+        Category::Office,
+        Category::Health,
+        Category::Map,
+        Category::Media,
+        Category::Nature,
+        Category::Objects,
+        Category::People,
+        Category::System,
+        Category::Weather,
+        Category::Unknown,
     ];
 }
 
-impl From<String> for IconSearchCategory {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "Arrows" => IconSearchCategory::Arrows,
-            "Brand" => IconSearchCategory::Brand,
-            "Commerce" => IconSearchCategory::Commerce,
-            "Communication" => IconSearchCategory::Communication,
-            "Design" => IconSearchCategory::Design,
-            "Development" => IconSearchCategory::Development,
-            "Editor" => IconSearchCategory::Editor,
-            "Finance" => IconSearchCategory::Finance,
-            "Games" => IconSearchCategory::Games,
-            "Office" => IconSearchCategory::Office,
-            "Health" => IconSearchCategory::Health,
-            "Map" => IconSearchCategory::Map,
-            "Media" => IconSearchCategory::Media,
-            "Nature" => IconSearchCategory::Nature,
-            "Objects" => IconSearchCategory::Objects,
-            "People" => IconSearchCategory::People,
-            "System" => IconSearchCategory::System,
-            "Weather" => IconSearchCategory::Weather,
-            _ => IconSearchCategory::Unknown,
-        }
+impl FromStr for Category {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let res = match value {
+            "Arrows" => Category::Arrows,
+            "Brand" => Category::Brand,
+            "Commerce" => Category::Commerce,
+            "Communication" => Category::Communication,
+            "Design" => Category::Design,
+            "Development" => Category::Development,
+            "Editor" => Category::Editor,
+            "Finance" => Category::Finance,
+            "Games" => Category::Games,
+            "Office" => Category::Office,
+            "Health" => Category::Health,
+            "Map" => Category::Map,
+            "Media" => Category::Media,
+            "Nature" => Category::Nature,
+            "Objects" => Category::Objects,
+            "People" => Category::People,
+            "System" => Category::System,
+            "Weather" => Category::Weather,
+            _ => Category::Unknown,
+        };
+        Ok(res)
     }
 }
 
-impl std::fmt::Display for IconSearchCategory {
+impl std::fmt::Display for Category {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IconSearchCategory::Arrows => write!(f, "Arrows"),
-            IconSearchCategory::Brand => write!(f, "Brand"),
-            IconSearchCategory::Commerce => write!(f, "Commerce"),
-            IconSearchCategory::Communication => write!(f, "Communication"),
-            IconSearchCategory::Design => write!(f, "Design"),
-            IconSearchCategory::Development => write!(f, "Development"),
-            IconSearchCategory::Editor => write!(f, "Editor"),
-            IconSearchCategory::Finance => write!(f, "Finance"),
-            IconSearchCategory::Games => write!(f, "Games"),
-            IconSearchCategory::Office => write!(f, "Office"),
-            IconSearchCategory::Health => write!(f, "Health"),
-            IconSearchCategory::Map => write!(f, "Map"),
-            IconSearchCategory::Media => write!(f, "Media"),
-            IconSearchCategory::Nature => write!(f, "Nature"),
-            IconSearchCategory::Objects => write!(f, "Objects"),
-            IconSearchCategory::People => write!(f, "People"),
-            IconSearchCategory::System => write!(f, "System"),
-            IconSearchCategory::Weather => write!(f, "Weather"),
-            IconSearchCategory::Unknown => write!(f, "Unknown"),
+            Category::Arrows => write!(f, "Arrows"),
+            Category::Brand => write!(f, "Brand"),
+            Category::Commerce => write!(f, "Commerce"),
+            Category::Communication => write!(f, "Communication"),
+            Category::Design => write!(f, "Design"),
+            Category::Development => write!(f, "Development"),
+            Category::Editor => write!(f, "Editor"),
+            Category::Finance => write!(f, "Finance"),
+            Category::Games => write!(f, "Games"),
+            Category::Office => write!(f, "Office"),
+            Category::Health => write!(f, "Health"),
+            Category::Map => write!(f, "Map"),
+            Category::Media => write!(f, "Media"),
+            Category::Nature => write!(f, "Nature"),
+            Category::Objects => write!(f, "Objects"),
+            Category::People => write!(f, "People"),
+            Category::System => write!(f, "System"),
+            Category::Weather => write!(f, "Weather"),
+            Category::Unknown => write!(f, "Unknown"),
         }
     }
 }

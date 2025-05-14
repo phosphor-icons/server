@@ -1,5 +1,4 @@
-use crate::{db, icons, table};
-use serde::Serialize;
+use crate::{db, table};
 use std::sync::Mutex;
 
 #[derive(Debug)]
@@ -56,18 +55,5 @@ impl AppState {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Serialize)]
-pub struct MultipleIconsResponse {
-    icons: Vec<icons::Icon>,
-    count: usize,
-}
-
-impl MultipleIconsResponse {
-    pub fn new(icons: Vec<icons::Icon>) -> Self {
-        let count = icons.len();
-        Self { icons, count }
     }
 }

@@ -1,4 +1,4 @@
-use crate::icons::{Icon, IconCategory, IconSearchCategory, IconStatus};
+use crate::icons::{Category, FigmaCategory, Icon, IconStatus};
 use gcloud_sdk::{
     self,
     google::area120::tables::v1alpha1::{
@@ -140,14 +140,14 @@ impl TryFrom<Row> for Icon {
             .unwrap_or(IconStatus::None);
         let category = row
             .values
-            .get(TableColumn::Category.as_str())
-            .and_then(as_category)
-            .unwrap_or(IconCategory::Unknown);
-        let search_categories = row
-            .values
             .get(TableColumn::SearchCategories.as_str())
             .map(as_search_categories)
             .unwrap_or_default();
+        let figma_category = row
+            .values
+            .get(TableColumn::Category.as_str())
+            .and_then(as_category)
+            .unwrap_or(FigmaCategory::Unknown);
         let tags = row
             .values
             .get(TableColumn::Tags.as_str())
@@ -182,8 +182,8 @@ impl TryFrom<Row> for Icon {
             alias,
             code,
             status,
-            category,
-            search_categories,
+            search_categories: category,
+            category: figma_category,
             tags,
             notes,
             released_at,
@@ -248,14 +248,14 @@ fn as_status(value: &prost_types::Value) -> Option<IconStatus> {
     }
 }
 
-fn as_category(value: &prost_types::Value) -> Option<IconCategory> {
+fn as_category(value: &prost_types::Value) -> Option<FigmaCategory> {
     match &value.kind {
         Some(prost_types::value::Kind::StringValue(v)) => serde_plain::from_str(v).ok(),
         _ => None,
     }
 }
 
-fn as_search_categories(value: &prost_types::Value) -> Vec<IconSearchCategory> {
+fn as_search_categories(value: &prost_types::Value) -> Vec<Category> {
     match &value.kind {
         Some(prost_types::value::Kind::ListValue(v)) => v
             .values

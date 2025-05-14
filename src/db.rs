@@ -1,4 +1,4 @@
-use crate::icons::{Icon, IconCategory, IconStatus};
+use crate::icons::{Category, Icon, IconStatus};
 use serde::{Deserialize, Deserializer};
 use sqlx::{migrate::Migrator, PgPool, Pool, Postgres, QueryBuilder};
 use std::env;
@@ -31,90 +31,73 @@ impl Database {
     #[tracing::instrument(level = "info")]
     pub async fn get_icons(&self, query: IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
         let mut builder: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM icons");
-        let mut has_clauses = false;
 
-        if query.has_clauses() {
-            builder.push(" WHERE ");
+        builder.push(" WHERE ");
 
-            if let Some(published) = query.published {
-                builder.push("published = ").push_bind(published);
-                has_clauses = true;
+        match query.published {
+            Some(Ternary::True) | None => {
+                builder.push("published = TRUE");
             }
-
-            if let Some(name) = query.name {
-                if has_clauses {
-                    builder.push(" AND ");
-                }
-                builder.push("name = ").push_bind(name);
+            Some(Ternary::False) => {
+                builder.push("published = FALSE");
             }
-
-            if let Some(status) = query.status {
-                if !status.is_empty() {
-                    if has_clauses {
-                        builder.push(" AND ");
-                    }
-                    builder.push("status IN ");
-
-                    let mut list = builder.separated(", ");
-                    list.push_unseparated("(");
-                    for status in status {
-                        list.push_bind(status.to_string());
-                    }
-                    list.push_unseparated(")");
-
-                    has_clauses = true;
-                }
+            Some(Ternary::Any) => {
+                builder.push("published IS NOT NULL");
             }
+        }
 
-            if let Some(category) = query.category {
-                if !category.is_empty() {
-                    if has_clauses {
-                        builder.push(" AND ");
-                    }
+        if let Some(name) = query.name {
+            builder.push(" AND ");
+            builder.push("name = ").push_bind(name);
+        }
 
-                    builder.push("category IN ");
+        if let Some(status) = query.status {
+            if !status.is_empty() {
+                builder.push(" AND ");
+                builder.push("status IN ");
 
-                    let mut list = builder.separated(", ");
-                    list.push_unseparated("(");
-                    for category in category {
-                        list.push_bind(category.to_string());
-                    }
-                    list.push_unseparated(")");
-
-                    has_clauses = true;
+                let mut list = builder.separated(", ");
+                list.push_unseparated("(");
+                for status in status {
+                    list.push_bind(status.to_string());
                 }
+                list.push_unseparated(")");
             }
+        }
 
-            if let Some(tags) = query.tags {
-                if !tags.is_empty() {
-                    if has_clauses {
-                        builder.push(" AND ");
-                    }
-                    builder.push("tags && ").push_bind(tags);
-                }
+        if let Some(category) = query.category {
+            if !category.is_empty() {
+                let category = category.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+                builder.push(" AND ");
+                builder.push("search_categories && ").push_bind(category);
             }
+        }
 
-            if let Some(release) = query.released {
-                if has_clauses {
-                    builder.push(" AND ");
+        if let Some(tags) = query.tags {
+            if !tags.is_empty() {
+                builder.push(" AND ");
+                builder.push("tags && ").push_bind(tags);
+            }
+        }
+
+        if let Some(release) = query.released {
+            builder.push(" AND ");
+            match release {
+                IconReleaseQuery::Exact(v) => {
+                    builder.push("released_at = ").push_bind(v);
                 }
-                match release {
-                    IconReleaseQuery::Exact(v) => {
-                        builder.push("released_at = ").push_bind(v);
-                    }
-                    IconReleaseQuery::Range(a, b) => {
-                        builder
-                            .push("released_at BETWEEN ")
-                            .push_bind(a)
-                            .push(" AND ")
-                            .push_bind(b);
-                    }
-                    IconReleaseQuery::LessThanOrEqual(v) => {
-                        builder.push("released_at <= ").push_bind(v);
-                    }
-                    IconReleaseQuery::GraterThanOrEqual(v) => {
-                        builder.push("released_at >= ").push_bind(v);
-                    }
+                IconReleaseQuery::Range(a, b) => {
+                    builder
+                        .push("released_at BETWEEN ")
+                        .push_bind(a)
+                        .push(" AND ")
+                        .push_bind(b);
+                }
+                IconReleaseQuery::LessThanOrEqual(v) => {
+                    builder.push("released_at <= ").push_bind(v);
+                }
+                IconReleaseQuery::GraterThanOrEqual(v) => {
+                    builder.push("released_at >= ").push_bind(v);
                 }
             }
         }
@@ -220,18 +203,22 @@ impl Database {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
 pub struct IconQuery {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_csv")]
     pub status: Option<Vec<IconStatus>>,
     #[serde(default, deserialize_with = "deserialize_csv")]
-    pub category: Option<Vec<IconCategory>>,
+    pub category: Option<Vec<Category>>,
     #[serde(default, deserialize_with = "deserialize_csv")]
     pub tags: Option<Vec<String>>,
-    pub search_categories: Option<Vec<IconCategory>>,
-    pub published: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_optional_icon_release_query")]
+    pub published: Option<Ternary>,
+    #[serde(
+        default,
+        alias = "v",
+        alias = "released",
+        deserialize_with = "deserialize_optional_icon_release_query"
+    )]
     pub released: Option<IconReleaseQuery>,
     #[serde(default, deserialize_with = "deserialize_optional_icon_release_query")]
     pub updated: Option<IconReleaseQuery>,
@@ -242,7 +229,7 @@ pub struct IconQuery {
 
 impl IconQuery {
     pub fn new() -> Self {
-        IconQuery::default().published(true)
+        IconQuery::default().published(Ternary::True)
     }
 
     pub fn name(mut self, name: String) -> Self {
@@ -255,7 +242,7 @@ impl IconQuery {
         self
     }
 
-    pub fn category(mut self, category: Vec<IconCategory>) -> Self {
+    pub fn category(mut self, category: Vec<Category>) -> Self {
         self.category = Some(category);
         self
     }
@@ -265,12 +252,7 @@ impl IconQuery {
         self
     }
 
-    pub fn search_categories(mut self, search_categories: Vec<IconCategory>) -> Self {
-        self.search_categories = Some(search_categories);
-        self
-    }
-
-    pub fn published(mut self, published: bool) -> Self {
+    pub fn published(mut self, published: Ternary) -> Self {
         self.published = Some(published);
         self
     }
@@ -295,7 +277,6 @@ impl IconQuery {
             || self.status.is_some()
             || self.category.is_some()
             || self.tags.is_some()
-            || self.search_categories.is_some()
             || self.published.is_some()
             || self.released.is_some()
             || self.updated.is_some()
@@ -326,7 +307,7 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, utoipa::ToSchema)]
 pub enum IconReleaseQuery {
     Exact(f64),
     Range(f64, f64),
@@ -386,7 +367,7 @@ where
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderColumn {
     #[default]
@@ -396,7 +377,7 @@ pub enum OrderColumn {
     Code,
 }
 
-#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderDirection {
     #[default]
@@ -411,4 +392,13 @@ impl std::fmt::Display for OrderDirection {
             OrderDirection::Desc => write!(f, "DESC"),
         }
     }
+}
+
+#[derive(Debug, Default, Clone, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Ternary {
+    #[default]
+    True,
+    False,
+    Any,
 }
