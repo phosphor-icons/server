@@ -149,7 +149,7 @@ async fn main() -> Result<(), std::io::Error> {
             .openapi_service(|api| Scalar::with_url("/scalar", api))
             .into_app()
     })
-    // .workers(4)
+    .workers(4)
     .bind((url, port))?
     .run()
     .await
