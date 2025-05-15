@@ -1,4 +1,5 @@
 use crate::icons::{Category, Icon, IconStatus};
+use crate::svgs::Svg;
 use serde::{Deserialize, Deserializer};
 use sqlx::{migrate::Migrator, PgPool, Pool, Postgres, QueryBuilder};
 use std::env;
@@ -133,7 +134,25 @@ impl Database {
     #[tracing::instrument(level = "info")]
     pub async fn upsert_icon(&self, icon: &Icon) -> Result<Icon, sqlx::Error> {
         sqlx::query_as(
-            "INSERT INTO icons (rid, name, status, category, search_categories, tags, notes, released_at, last_updated_at, deprecated_at, published, alias, code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (rid) DO UPDATE SET name = EXCLUDED.name RETURNING *",
+            r#"
+            INSERT INTO icons (rid, name, status, category, search_categories, tags, notes, released_at, last_updated_at, deprecated_at, published, alias, code) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+            ON CONFLICT (rid)
+            DO UPDATE SET
+                name = EXCLUDED.name
+                status = EXCLUDED.status,
+                category = EXCLUDED.category,
+                search_categories = EXCLUDED.search_categories,
+                tags = EXCLUDED.tags,
+                notes = EXCLUDED.notes,
+                released_at = EXCLUDED.released_at,
+                last_updated_at = EXCLUDED.last_updated_at,
+                deprecated_at = EXCLUDED.deprecated_at,
+                published = EXCLUDED.published,
+                alias = EXCLUDED.alias,
+                code = EXCLUDED.code
+            RETURNING *
+            "#,
         )
         .bind(&icon.rid)
         .bind(&icon.name)
@@ -225,6 +244,24 @@ impl Database {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(tags.into_iter().map(|t| t.0).collect())
+    }
+
+    #[tracing::instrument(level = "info")]
+    pub async fn upsert_svg(&self, svg: &Svg) -> Result<Svg, sqlx::Error> {
+        sqlx::query_as(
+            r#"
+            INSERT INTO svgs (icon_id, weight, src) VALUES ($1, $2, $3)
+            ON CONFLICT (icon_id, weight)
+            DO UPDATE SET
+                weight = EXCLUDED.weight
+            RETURNING *
+            "#,
+        )
+        .bind(&svg.icon_id)
+        .bind(svg.weight.to_string())
+        .bind(&svg.src)
+        .fetch_one(&self.pool)
+        .await
     }
 }
 

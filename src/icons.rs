@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, FromRow, Row};
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 use utoipa::ToSchema;
 
 #[derive(Debug, Default, Serialize, ToSchema)]
@@ -95,6 +95,58 @@ impl FromRow<'_, PgRow> for Icon {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IconWeight {
+    Thin,
+    Light,
+    #[default]
+    Regular,
+    Bold,
+    Fill,
+    Duotone,
+}
+
+impl IconWeight {
+    pub const COUNT: usize = 6;
+    pub const ALL: [IconWeight; IconWeight::COUNT] = [
+        IconWeight::Thin,
+        IconWeight::Light,
+        IconWeight::Regular,
+        IconWeight::Bold,
+        IconWeight::Fill,
+        IconWeight::Duotone,
+    ];
+}
+
+impl Display for IconWeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IconWeight::Thin => write!(f, "thin"),
+            IconWeight::Light => write!(f, "light"),
+            IconWeight::Regular => write!(f, "regular"),
+            IconWeight::Bold => write!(f, "bold"),
+            IconWeight::Fill => write!(f, "fill"),
+            IconWeight::Duotone => write!(f, "duotone"),
+        }
+    }
+}
+
+impl FromStr for IconWeight {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "thin" => Ok(IconWeight::Thin),
+            "light" => Ok(IconWeight::Light),
+            "regular" => Ok(IconWeight::Regular),
+            "bold" => Ok(IconWeight::Bold),
+            "fill" => Ok(IconWeight::Fill),
+            "duotone" => Ok(IconWeight::Duotone),
+            _ => Err(format!("Invalid IconWeight: {}", value)),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum IconStatus {
@@ -134,7 +186,7 @@ impl FromStr for IconStatus {
     }
 }
 
-impl std::fmt::Display for IconStatus {
+impl Display for IconStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             IconStatus::Backlog => write!(f, "Backlog"),
@@ -233,7 +285,7 @@ impl FromStr for FigmaCategory {
     }
 }
 
-impl std::fmt::Display for FigmaCategory {
+impl Display for FigmaCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FigmaCategory::Arrows => write!(f, "Arrows"),

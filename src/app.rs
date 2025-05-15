@@ -1,5 +1,7 @@
-use crate::{db, table};
+use crate::{db, icons::IconWeight, svgs, table};
+use futures::stream::{self, StreamExt};
 use std::sync::Mutex;
+use tokio::{fs, sync::Semaphore};
 
 #[derive(Debug)]
 pub struct AppState {
@@ -17,6 +19,7 @@ impl AppState {
                 "Failed to initialize table client",
             )
         })?;
+
         let db = db::Database::init().await.map_err(|_| {
             tracing::error!("Failed to initialize database");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to initialize database")
@@ -30,7 +33,14 @@ impl AppState {
         if let Ok(val) = std::env::var("PHOSPHOR_SERVER_SYNC") {
             tracing::info!("PHOSPHOR_SERVER_SYNC={}", val);
             if val == "true" {
-                app.sync().await?;
+                app.sync_table().await?;
+            }
+        }
+
+        if let Ok(val) = std::env::var("PHOSPHOR_ASSETS_SYNC") {
+            tracing::info!("PHOSPHOR_ASSETS_SYNC={}", val);
+            if val == "true" {
+                app.sync_assets().await?;
             }
         }
 
@@ -38,8 +48,9 @@ impl AppState {
     }
 
     #[tracing::instrument(level = "info")]
-    async fn sync(&mut self) -> Result<(), std::io::Error> {
-        println!("Syncing table client");
+    async fn sync_table(&mut self) -> Result<(), std::io::Error> {
+        tracing::info!("Syncing table client");
+
         let client = self.client.lock().unwrap();
         let icons = client.sync().await.map_err(|_| {
             tracing::error!("Failed to sync table client");
@@ -52,6 +63,60 @@ impl AppState {
                 tracing::error!("Failed to upsert icon: {:?}", e);
                 std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
             })?;
+        }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(level = "info")]
+    async fn sync_assets(&self) -> Result<(), std::io::Error> {
+        const ASSETS_DIR: &str = "./core/assets";
+        tracing::info!("Syncing assets");
+
+        let mut files: Vec<(String, IconWeight)> = Vec::new();
+
+        for weight in &[IconWeight::Bold, IconWeight::Duotone, IconWeight::Fill] {
+            let path = format!("{}/{}", ASSETS_DIR, weight.to_string());
+            let mut dir = fs::read_dir(&path).await?;
+
+            while let Some(entry) = dir.next_entry().await? {
+                if entry.file_type().await?.is_file() {
+                    let file_name = entry.file_name().to_str().unwrap().to_owned();
+                    if file_name.ends_with(".svg") {
+                        let path = format!("{}/{}", path, file_name);
+                        files.push((path, weight.clone()));
+                    }
+                }
+            }
+        }
+
+        for (path, weight) in files {
+            if let Ok(contents) = fs::read_to_string(&path).await {
+                let name = path
+                    .split('/')
+                    .last()
+                    .unwrap()
+                    .replace(".svg", "")
+                    .replace("-duotone", "")
+                    .replace("-fill", "")
+                    .replace("-thin", "")
+                    .replace("-light", "")
+                    .replace("-bold", "")
+                    .to_string();
+                let db = self.db.lock().unwrap();
+                if let Some(icon) = db.get_icon_by_name(&name).await.unwrap() {
+                    let svg = svgs::Svg {
+                        id: 0,
+                        icon_id: icon.id,
+                        weight: weight.clone(),
+                        src: contents,
+                    };
+                    db.upsert_svg(&svg).await.unwrap();
+                    tracing::info!("Upserted SVG: {} - {:?}", name, weight);
+                } else {
+                    tracing::warn!("Icon not found in database: {}", name);
+                }
+            }
         }
 
         Ok(())
