@@ -309,7 +309,7 @@ async fn main() -> Result<(), std::io::Error> {
     })
     // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
     // least one request handler. We should look at real-world utilization once this is public.
-    .workers(4)
+    .workers(6)
     .bind((url, port))?
     .run()
     .await

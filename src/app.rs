@@ -1,7 +1,6 @@
 use crate::{db, icons::IconWeight, svgs, table};
-use futures::stream::{self, StreamExt};
 use std::sync::Mutex;
-use tokio::{fs, sync::Semaphore};
+use tokio::fs;
 
 #[derive(Debug)]
 pub struct AppState {
@@ -30,8 +29,8 @@ impl AppState {
             db: Mutex::new(db),
         };
 
-        if let Ok(val) = std::env::var("PHOSPHOR_SERVER_SYNC") {
-            tracing::info!("PHOSPHOR_SERVER_SYNC={}", val);
+        if let Ok(val) = std::env::var("PHOSPHOR_TABLE_SYNC") {
+            tracing::info!("PHOSPHOR_TABLE_SYNC={}", val);
             if val == "true" {
                 app.sync_table().await?;
             }
@@ -75,7 +74,7 @@ impl AppState {
 
         let mut files: Vec<(String, IconWeight)> = Vec::new();
 
-        for weight in &[IconWeight::Bold, IconWeight::Duotone, IconWeight::Fill] {
+        for weight in IconWeight::ALL {
             let path = format!("{}/{}", ASSETS_DIR, weight.to_string());
             let mut dir = fs::read_dir(&path).await?;
 
@@ -96,12 +95,12 @@ impl AppState {
                     .split('/')
                     .last()
                     .unwrap()
+                    .replace("-duotone.svg", "")
+                    .replace("-fill.svg", "")
+                    .replace("-thin.svg", "")
+                    .replace("-light.svg", "")
+                    .replace("-bold.svg", "")
                     .replace(".svg", "")
-                    .replace("-duotone", "")
-                    .replace("-fill", "")
-                    .replace("-thin", "")
-                    .replace("-light", "")
-                    .replace("-bold", "")
                     .to_string();
                 let db = self.db.lock().unwrap();
                 if let Some(icon) = db.get_icon_by_name(&name).await.unwrap() {
