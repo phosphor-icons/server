@@ -1,7 +1,8 @@
-use crate::icons::{Category, Icon, IconStatus};
+use crate::icons::{Category, Icon, IconStatus, IconWeight};
 use crate::svgs::Svg;
 use serde::{Deserialize, Deserializer};
 use sqlx::{migrate::Migrator, PgPool, Pool, Postgres, QueryBuilder};
+use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 use utoipa::{IntoParams, ToSchema};
@@ -244,6 +245,22 @@ impl Database {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(tags.into_iter().map(|t| t.0).collect())
+    }
+
+    #[tracing::instrument(level = "info")]
+    pub async fn get_svg_weights_by_icon_id(
+        &self,
+        icon_id: i32,
+    ) -> Result<HashMap<IconWeight, Svg>, sqlx::Error> {
+        let svgs: Vec<Svg> = sqlx::query_as("SELECT * FROM svgs WHERE icon_id = $1")
+            .bind(icon_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(svgs
+            .into_iter()
+            .map(|s| (s.weight.clone(), s))
+            .collect::<HashMap<_, _>>())
     }
 
     #[tracing::instrument(level = "info")]

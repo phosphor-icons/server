@@ -10,17 +10,65 @@ use utoipa_actix_web::{scope, AppExt};
 use utoipa_scalar::{Scalar, Servable as ScalarServable};
 
 mod icons {
+    use std::collections::HashMap;
+
     use super::*;
-    use phosphor_server::{app, db, icons};
+    use phosphor_server::{app, db, icons, svgs};
     use utoipa::ToSchema;
+
+    #[derive(Serialize, ToSchema)]
+    pub struct IconWeightMap {
+        #[schema(example = "<svg>...</svg>")]
+        regular: String,
+        #[schema(example = "<svg>...</svg>")]
+        thin: String,
+        #[schema(example = "<svg>...</svg>")]
+        light: String,
+        #[schema(example = "<svg>...</svg>")]
+        bold: String,
+        #[schema(example = "<svg>...</svg>")]
+        fill: String,
+        #[schema(example = "<svg>...</svg>")]
+        duotone: String,
+    }
+
+    impl From<HashMap<icons::IconWeight, svgs::Svg>> for IconWeightMap {
+        fn from(map: HashMap<icons::IconWeight, svgs::Svg>) -> Self {
+            Self {
+                regular: map
+                    .get(&icons::IconWeight::Regular)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+                thin: map
+                    .get(&icons::IconWeight::Thin)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+                light: map
+                    .get(&icons::IconWeight::Light)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+                bold: map
+                    .get(&icons::IconWeight::Bold)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+                fill: map
+                    .get(&icons::IconWeight::Fill)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+                duotone: map
+                    .get(&icons::IconWeight::Duotone)
+                    .map(|s| s.src.clone())
+                    .unwrap_or_default(),
+            }
+        }
+    }
 
     #[derive(ToSchema, Serialize)]
     pub struct SingleIconResponse {
         /// Icon metadata
         icon: icons::Icon,
         /// SVG code for the icon
-        #[schema(example = "<svg>...</svg>")]
-        svg: String,
+        svgs: IconWeightMap,
     }
 
     #[utoipa::path(
@@ -43,8 +91,13 @@ mod icons {
         dbg!(id);
         match db.get_icon_by_id(id).await {
             Ok(Some(icon)) => {
-                let svg = String::new();
-                HttpResponse::Ok().json(SingleIconResponse { icon, svg })
+                if let Ok(svgmap) = db.get_svg_weights_by_icon_id(id).await {
+                    let svgs = IconWeightMap::from(svgmap);
+                    HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
+                } else {
+                    tracing::error!("Failed to fetch SVGs for icon: {}", id);
+                    HttpResponse::InternalServerError().finish()
+                }
             }
             Ok(None) => {
                 tracing::info!("Icon not found: {}", id);
