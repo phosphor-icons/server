@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer};
 use sqlx::{migrate::Migrator, PgPool, Pool, Postgres, QueryBuilder};
 use std::env;
 use std::str::FromStr;
+use utoipa::{IntoParams, ToSchema};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -29,7 +30,7 @@ impl Database {
     }
 
     #[tracing::instrument(level = "info")]
-    pub async fn get_icons(&self, query: IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
+    pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
         let mut builder: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM icons");
 
         builder.push(" WHERE ");
@@ -46,12 +47,12 @@ impl Database {
             }
         }
 
-        if let Some(name) = query.name {
+        if let Some(name) = query.name.as_ref() {
             builder.push(" AND ");
             builder.push("name = ").push_bind(name);
         }
 
-        if let Some(status) = query.status {
+        if let Some(status) = query.status.as_ref() {
             if !status.is_empty() {
                 builder.push(" AND ");
                 builder.push("status IN ");
@@ -65,7 +66,7 @@ impl Database {
             }
         }
 
-        if let Some(category) = query.category {
+        if let Some(category) = query.category.as_ref() {
             if !category.is_empty() {
                 let category = category.iter().map(|c| c.to_string()).collect::<Vec<_>>();
                 builder.push(" AND ");
@@ -73,14 +74,14 @@ impl Database {
             }
         }
 
-        if let Some(tags) = query.tags {
+        if let Some(tags) = query.tags.as_ref() {
             if !tags.is_empty() {
                 builder.push(" AND ");
                 builder.push("tags && ").push_bind(tags);
             }
         }
 
-        if let Some(release) = query.released {
+        if let Some(release) = query.released.as_ref() {
             builder.push(" AND ");
             match release {
                 IconReleaseQuery::Exact(v) => {
@@ -177,7 +178,7 @@ impl Database {
     }
 
     #[tracing::instrument(level = "info")]
-    pub async fn search_icons(
+    pub async fn query_icons(
         &self,
         name: &str,
         status: Option<&str>,
@@ -201,28 +202,79 @@ impl Database {
             .fetch_all(&self.pool)
             .await
     }
+
+    #[tracing::instrument(level = "info")]
+    pub async fn fuzzy_search_icons(&self, search: &IconSearch) -> Result<Vec<Icon>, sqlx::Error> {
+        let query = "SELECT * FROM icons WHERE name ILIKE $1".to_string();
+        let params = vec![format!("%{}%", &search.q)];
+
+        let _: Vec<Icon> = sqlx::query_as(&query)
+            .bind(params)
+            .fetch_all(&self.pool)
+            .await?;
+
+        todo!("Implement fuzzy search");
+    }
+
+    #[tracing::instrument(level = "info")]
+    pub async fn get_all_tags(&self) -> Result<Vec<String>, sqlx::Error> {
+        #[derive(Debug, sqlx::FromRow)]
+        struct Tag(String);
+        let tags: Vec<Tag> =
+            sqlx::query_as("SELECT DISTINCT unnest(tags) AS tag FROM icons ORDER BY tag")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(tags.into_iter().map(|t| t.0).collect())
+    }
 }
 
-#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query, style = Form)]
+pub struct IconSearch {
+    /// A fuzzy search term to match against icon names, aliases, tags, and othjer properties.
+    #[serde(alias = "query")]
+    #[param(example = "block")]
+    pub q: String,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query, style = Form)]
 pub struct IconQuery {
+    /// Filter search results by kebab-case icon name.
     pub name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_csv")]
-    pub status: Option<Vec<IconStatus>>,
-    #[serde(default, deserialize_with = "deserialize_csv")]
-    pub category: Option<Vec<Category>>,
-    #[serde(default, deserialize_with = "deserialize_csv")]
-    pub tags: Option<Vec<String>>,
-    pub published: Option<Ternary>,
+    /// Filter search results by version or version ranges in which they were published, including exact
+    /// versions (`2.1`), open-ended inclusive ranges (`..1.4` or `2.0..`), and closed inclusive
+    /// ranges (`1.5..2.0`). All versions are in the format `<major>.<minor>`.
     #[serde(
         default,
-        alias = "v",
+        rename = "v",
         alias = "released",
         deserialize_with = "deserialize_optional_icon_release_query"
     )]
+    #[param(example = "1.5..2.0")]
     pub released: Option<IconReleaseQuery>,
-    #[serde(default, deserialize_with = "deserialize_optional_icon_release_query")]
+    /// Filter search results by whether the icon is published. When `true` (default), only icons
+    /// that are currently available are returned. When `false`, only icons that are incomplete or
+    /// removed are returned. When `any`, results are not filtered by published state.
+    #[param(example = "any")]
+    pub published: Option<Ternary>,
+    #[serde(
+        skip,
+        default,
+        deserialize_with = "deserialize_optional_icon_release_query"
+    )]
     pub updated: Option<IconReleaseQuery>,
+    #[serde(skip)]
     pub deprecated: Option<bool>,
+    /// Filter search results by one or more comma-separated release statuses.
+    #[serde(default, deserialize_with = "deserialize_csv")]
+    pub status: Option<Vec<IconStatus>>,
+    /// Filter search results by one or more comma-separated icon categories.
+    #[serde(default, deserialize_with = "deserialize_csv")]
+    pub category: Option<Vec<Category>>,
+    /// Filter search results by one or more comma-separated tags.
+    #[serde(default, deserialize_with = "deserialize_csv")]
+    pub tags: Option<Vec<String>>,
     pub order: Option<OrderColumn>,
     pub dir: Option<OrderDirection>,
 }
@@ -307,7 +359,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, utoipa::ToSchema)]
+#[derive(Debug, Clone, ToSchema)]
 pub enum IconReleaseQuery {
     Exact(f64),
     Range(f64, f64),
@@ -367,7 +419,7 @@ where
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderColumn {
     #[default]
@@ -377,7 +429,7 @@ pub enum OrderColumn {
     Code,
 }
 
-#[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderDirection {
     #[default]
@@ -394,7 +446,7 @@ impl std::fmt::Display for OrderDirection {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Clone, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Ternary {
     #[default]

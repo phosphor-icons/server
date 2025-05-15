@@ -1,25 +1,50 @@
-use std::str::FromStr;
-
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgRow, FromRow, Row};
+use std::str::FromStr;
+use utoipa::ToSchema;
 
-#[derive(Debug, Default, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Serialize, ToSchema)]
 pub struct Icon {
+    /// The unique ID of the icon in the database.
+    #[schema(example = 2884)]
     pub id: i32,
+    #[schema(example = "96cR4kqjHO16pBVCiXg_Ep")]
     pub rid: String,
+    /// The kebab-case name of the icon.
+    #[schema(example = "cube")]
     pub name: String,
+    /// An optional kebab-case alias for the icon, usually a deprecated name.
     pub alias: Option<String>,
+    /// The decimal representation of an icon's unicode codepoint, as implemented in
+    /// [@phosphor-icons/web](https://github.com/phosphor-icons/web) and other font-based
+    /// libraries.
+    #[schema(example = 57818)]
     pub code: Option<i32>,
+    /// The implementation status of the icon in the design process.
+    #[schema(example = "Implemented")]
     pub status: IconStatus,
-    // NOTE: This is the category filter exposed via API
+    /// A list of categories the icon belongs to, used for filtering in the API.
+    #[schema(example = json!(["Design", "Games", "Objects"]))]
     pub search_categories: Vec<Category>,
-    // NOTE: This is a Figma category and is not used in the DB query
+    /// A string representing the category the icon belongs to in the Figma library, not used for
+    /// filtering in the API.
     pub category: FigmaCategory,
+    /// A list of string tags associated with the icon.
+    #[schema(example = json!(["square", "box", "3d", "volume", "blocks"]))]
     pub tags: Vec<String>,
     pub notes: Option<String>,
+    /// A float in the format `<major>.<minor>` representing the version in which the icon was
+    /// released.
+    #[schema(example = 1.0)]
     pub released_at: Option<f64>,
+    /// A float in the format `<major>.<minor>` representing the version in which the icon was last
+    /// updated.
     pub last_updated_at: Option<f64>,
+    /// A float in the format `<major>.<minor>` representing the version in which the icon was
+    /// deprecated.
     pub deprecated_at: Option<f64>,
+    /// A boolean indicating whether the icon is published in the library.
+    #[schema(example = true)]
     pub published: bool,
 }
 
@@ -70,7 +95,7 @@ impl FromRow<'_, PgRow> for Icon {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum IconStatus {
     Backlog,
@@ -122,7 +147,7 @@ impl std::fmt::Display for IconStatus {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum FigmaCategory {
     Arrows,
@@ -234,7 +259,7 @@ impl std::fmt::Display for FigmaCategory {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, utoipa::ToSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum Category {
     Arrows,

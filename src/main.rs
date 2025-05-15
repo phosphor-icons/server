@@ -5,7 +5,7 @@ use phosphor_server::app;
 use serde::Serialize;
 use serde_qs::actix::QsQuery;
 use tracing_subscriber::{filter::EnvFilter, prelude::*};
-use utoipa;
+use utoipa::{self, OpenApi};
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_scalar::{Scalar, Servable as ScalarServable};
 
@@ -15,12 +15,55 @@ mod icons {
     use utoipa::ToSchema;
 
     #[derive(ToSchema, Serialize)]
-    pub struct MultipleIconsResponse {
+    pub struct SingleIconResponse {
+        /// Icon metadata
+        icon: icons::Icon,
+        /// SVG code for the icon
+        #[schema(example = "<svg>...</svg>")]
+        svg: String,
+    }
+
+    #[utoipa::path(
+        description = "Fetch an icon by its ID, returning the icon's metadata and SVG code.",
+        params(
+            ("id", example = 2884),
+        ),
+        responses(
+            (status = OK, body = SingleIconResponse, description = "Icon found"),
+            (status = NOT_FOUND, description = "Icon not found"),
+            (status = INTERNAL_SERVER_ERROR, description = "Internal server error"),
+        ),
+        tag = "Icon endpoints",
+    )]
+    #[get("/icon/{id}")]
+    #[tracing::instrument(level = "info")]
+    async fn icon(data: web::Data<app::AppState>, id: web::Path<i32>) -> impl Responder {
+        let db = data.db.lock().unwrap();
+        let id = id.into_inner();
+        dbg!(id);
+        match db.get_icon_by_id(id).await {
+            Ok(Some(icon)) => {
+                let svg = String::new();
+                HttpResponse::Ok().json(SingleIconResponse { icon, svg })
+            }
+            Ok(None) => {
+                tracing::info!("Icon not found: {}", id);
+                HttpResponse::NotFound().finish()
+            }
+            Err(_) => {
+                tracing::error!("Failed to fetch icons");
+                HttpResponse::InternalServerError().finish()
+            }
+        }
+    }
+
+    #[derive(ToSchema, Serialize)]
+    pub struct MultipleIconResponse {
         icons: Vec<icons::Icon>,
         count: usize,
     }
 
-    impl MultipleIconsResponse {
+    impl MultipleIconResponse {
         pub fn new(icons: Vec<icons::Icon>) -> Self {
             let count = icons.len();
             Self { icons, count }
@@ -28,41 +71,53 @@ mod icons {
     }
 
     #[utoipa::path(
-        responses((status = OK, body = icons::Icon)),
-        params(db::IconQuery)
+        description = "Fetch icons from our database, with optional query parameters to filter by name, status, release version, tags, and categories.",
+        params(db::IconQuery),
+        responses(
+            (status = OK, body = MultipleIconResponse),
+            (status = INTERNAL_SERVER_ERROR, description = "Internal server error"),
+        ),
+        tag = "Icon endpoints",
     )]
-    #[get("/all")]
+    #[get("/icons")]
     #[tracing::instrument(level = "info")]
     async fn all_icons(
         data: web::Data<app::AppState>,
         query: QsQuery<db::IconQuery>,
     ) -> impl Responder {
         let db = data.db.lock().unwrap();
-        match db.get_icons(query.into_inner()).await {
-            Ok(icons) => HttpResponse::Ok().json(MultipleIconsResponse::new(icons)),
-            Err(_) => {
-                tracing::error!("Failed to fetch icons for query");
+        let query = query.into_inner();
+        match db.get_icons(&query).await {
+            Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
+            Err(e) => {
+                tracing::error!("Failed to fetch icons for query: {:?}", e);
                 HttpResponse::InternalServerError().finish()
             }
         }
     }
 
-    #[utoipa::path(responses((status = OK, body = icons::Icon)))]
+    #[utoipa::path(
+        description = "Fuzzy search for icons by semantic name, use-case, or other properties. Returns results along with a relevance score.",
+        params(db::IconSearch),
+        responses(
+            (status = OK, body = MultipleIconResponse),
+            (status = NOT_FOUND, description = "Icon not found"),
+            (status = INTERNAL_SERVER_ERROR, description = "Internal server error"),
+        ),
+        tag = "Icon endpoints",
+    )]
     #[get("/search")]
     #[tracing::instrument(level = "info")]
     async fn search_icons(
         data: web::Data<app::AppState>,
-        query: web::Json<String>,
+        search: web::Query<db::IconSearch>,
     ) -> impl Responder {
         let db = data.db.lock().unwrap();
-        match db.get_icon_by_name(&query).await {
-            Ok(Some(icon)) => HttpResponse::Ok().json(icon),
-            Ok(None) => {
-                tracing::info!("Icon not found: {}", query);
-                HttpResponse::NotFound().finish()
-            }
+        let search = search.into_inner();
+        match db.fuzzy_search_icons(&search).await {
+            Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
             Err(_) => {
-                tracing::error!("Failed to fetch icon: {}", query);
+                tracing::error!("Failed to fetch icon: {:?}", search);
                 HttpResponse::InternalServerError().finish()
             }
         }
@@ -75,19 +130,59 @@ mod categories {
     use utoipa::ToSchema;
 
     #[derive(Serialize, ToSchema)]
-    struct Response {
+    struct CategoriesResponse {
         categories: Vec<icons::Category>,
         count: usize,
     }
 
-    #[utoipa::path(responses((status = OK, body = icons::Icon)))]
+    #[utoipa::path(
+        description = "Fetch all icon categories from our database. These can be used as the `category` parameter in the [/v1/icons](#tag/default/GET/v1/icons) endpoint.",
+        responses((status = OK, body = CategoriesResponse)),
+        tag = "Metadata endpoints",
+
+    )]
     #[get("/categories")]
     #[tracing::instrument(level = "info")]
     async fn categories() -> impl Responder {
-        HttpResponse::Ok().json(Response {
+        HttpResponse::Ok().json(CategoriesResponse {
             categories: icons::Category::ALL.to_vec(),
             count: icons::Category::COUNT,
         })
+    }
+}
+
+mod tags {
+    use super::*;
+    use utoipa::ToSchema;
+
+    #[derive(Serialize, ToSchema)]
+    struct TagsResponse {
+        tags: Vec<String>,
+        count: usize,
+    }
+
+    #[utoipa::path(
+        description = "Fetch all unique icon tags from our database. These can be used as the `tags` parameter in the [/v1/icons](#tag/default/GET/v1/icons) endpoint.",
+        responses(
+            (status = OK, body = TagsResponse),
+            (status = INTERNAL_SERVER_ERROR, description = "Internal server error"),
+        ),
+        tag = "Metadata endpoints",
+    )]
+    #[get("/tags")]
+    #[tracing::instrument(level = "info")]
+    async fn tags(data: web::Data<app::AppState>) -> impl Responder {
+        let db = data.db.lock().unwrap();
+        match db.get_all_tags().await {
+            Ok(tags) => {
+                let count = tags.len();
+                HttpResponse::Ok().json(TagsResponse { tags, count })
+            }
+            Err(_) => {
+                tracing::error!("Failed to fetch tags");
+                HttpResponse::InternalServerError().finish()
+            }
+        }
     }
 }
 
@@ -96,25 +191,83 @@ mod health {
     use utoipa::ToSchema;
 
     #[derive(Serialize, ToSchema)]
-    struct Response {
-        status: String,
+    #[serde(rename_all = "snake_case")]
+    enum HealthStatus {
+        Healthy,
+        Degraded,
+        Down,
     }
 
-    #[utoipa::path(responses((status = OK, body = Response)))]
+    #[derive(Serialize, ToSchema)]
+    struct HealthResponse {
+        status: HealthStatus,
+    }
+
+    #[utoipa::path(
+        description = "Reports the health of the API. Returns `healthy` if the database is reachable, `degraded` if there are issues, and `down` if the database is unreachable.",
+        responses(
+            (
+                status = OK,
+                body = HealthResponse,
+                description = "Service is healthy",
+            ),
+            (
+                status = SERVICE_UNAVAILABLE,
+                body = HealthResponse,
+                example = json!(HealthResponse { status: HealthStatus::Down }),,
+                description = "Service is down, unreachable",
+            ),
+            (
+                status = INTERNAL_SERVER_ERROR,
+                body = HealthResponse,
+                example = json!(HealthResponse { status: HealthStatus::Degraded }),,
+                description = "Service is degraded, connected but unresponsive",
+            ),
+        ),
+        tag = "Other endpoints",
+    )]
     #[get("/health")]
     #[tracing::instrument(level = "info")]
     async fn health_check(data: web::Data<app::AppState>) -> impl Responder {
-        let db = data.db.lock().unwrap();
-        if let Err(_) = db.ping().await {
-            tracing::error!("Database connection failed");
-            return HttpResponse::InternalServerError().finish();
-        }
+        match data.db.lock() {
+            Ok(db) => {
+                if let Err(_) = db.ping().await {
+                    tracing::error!("Database ping failed");
+                    return HttpResponse::InternalServerError().json(HealthResponse {
+                        status: HealthStatus::Degraded,
+                    });
+                }
 
-        HttpResponse::Ok().json(Response {
-            status: "ok".to_string(),
-        })
+                HttpResponse::Ok().json(HealthResponse {
+                    status: HealthStatus::Healthy,
+                })
+            }
+            Err(_) => {
+                tracing::error!("Failed to acquire database lock");
+                HttpResponse::ServiceUnavailable().json(HealthResponse {
+                    status: HealthStatus::Down,
+                })
+            }
+        }
     }
 }
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Phosphor Icons API",
+        description = "A public REST API exposing catalog information, versioning, and metadata for the Phosphor Icons library.",
+        version = "0.1.0",
+        contact(name = "Phosphor Team", email = "hello@phosphoricons.com"),
+        license(name = "MIT", identifier = "MIT"),
+    ),
+    tags(
+        (name = "Icon endpoints", description = "Search and filter existing, deprecated, and upcoming icons, and retrieve SVG source code for specific icons."),
+        (name = "Metadata endpoints", description = "Query for metadata about the API, including available categories and tags."),
+        (name = "Other endpoints", description = "Other endpoints"),
+    ),
+)]
+struct Api;
 
 #[actix_web::main]
 async fn main() -> Result<(), std::io::Error> {
@@ -141,14 +294,21 @@ async fn main() -> Result<(), std::io::Error> {
             .map(|app| app.wrap(Logger::default()))
             .service(
                 scope::scope("/v1")
+                    .service(icons::icon)
                     .service(icons::all_icons)
                     .service(icons::search_icons)
                     .service(categories::categories)
-                    .service(health::health_check),
+                    .service(tags::tags),
             )
-            .openapi_service(|api| Scalar::with_url("/scalar", api))
+            .service(health::health_check)
+            .openapi_service(|api| {
+                let api = Api::openapi().merge_from(api);
+                Scalar::with_url("/docs", api)
+            })
             .into_app()
     })
+    // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
+    // least one request handler. We should look at real-world utilization once this is public.
     .workers(4)
     .bind((url, port))?
     .run()
