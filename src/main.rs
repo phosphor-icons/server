@@ -189,7 +189,7 @@ mod categories {
     }
 
     #[utoipa::path(
-        description = "Fetch all icon categories from our database. These can be used as the `category` parameter in the [/v1/icons](#tag/default/GET/v1/icons) endpoint.",
+        description = "Fetch all icon categories from our database. These can be used as the `category` parameter in the [/v1/icons](#tag/icon-endpoints/GET/v1/icons) endpoint.",
         responses((status = OK, body = CategoriesResponse)),
         tag = "Metadata endpoints",
 
@@ -309,7 +309,22 @@ mod health {
 #[openapi(
     info(
         title = "Phosphor Icons API",
-        description = "A public REST API exposing catalog information, versioning, and metadata for the Phosphor Icons library.",
+        description = r#"\
+A public REST API exposing catalog information, versioning, and metadata for the [Phosphor Icons](https://phosphoricons.com) library. This service is public, free, and unrestricted – please use responsibly and mindully. To list icon metada and filter by name, tags, and versions, see [/v1/icons](#tag/icon-endpoints/GET/v1/icons). To customize and generate icons as SVG or PNG, see [/v1/icon](#tag/icon-endpoints/GET/v1/icon/{id}).
+
+> [!warning]
+> This API is experimental and subject to change. Use at your own risk.
+
+## Resources
+
+* [@phosphor-icons/core](https://github.com/phosphor-icons/core) – The core package of Phosphor Icons, containing the SVG assets and metadata for all icons.
+* [@phosphor-icons/server](https://github.com/phosphor-icons/server) – The source code for this API, and the very docs you are reading.
+* [@phosphor-icons/homepage](https://github.com/phosphor-icons/homepage) – The repo for our main website and links to libraries, docs, and community ports.
+
+## Acknowledgements
+
+Thanks so much for the open source projects 💜 that power this service. Our API is built with Rust and [Actix Web](https://actix.rs), and this documentation site is generated with [Utoipa](https://github.com/juhaku/utoipa) and beautifully rendered with [Scalar](https://scalar.com/).
+        "#,
         version = "0.1.0",
         contact(name = "Phosphor Team", email = "hello@phosphoricons.com"),
         license(name = "MIT", identifier = "MIT"),
@@ -356,9 +371,10 @@ async fn main() -> Result<(), std::io::Error> {
             .service(health::health_check)
             .openapi_service(|api| {
                 let api = Api::openapi().merge_from(api);
-                Scalar::with_url("/docs", api)
+                Scalar::with_url("/docs", api).custom_html(include_str!("../public/index.html"))
             })
             .into_app()
+            .service(actix_files::Files::new("/", "./public"))
     })
     // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
     // least one request handler. We should look at real-world utilization once this is public.
