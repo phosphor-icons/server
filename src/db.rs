@@ -322,12 +322,15 @@ pub struct IconQuery {
     pub deprecated: Option<bool>,
     /// Filter search results by one or more comma-separated release statuses.
     #[serde(default, deserialize_with = "deserialize_csv")]
+    #[param(explode = false)]
     pub status: Option<Vec<IconStatus>>,
     /// Filter search results by one or more comma-separated icon categories.
     #[serde(default, deserialize_with = "deserialize_csv")]
+    #[param(explode = false)]
     pub category: Option<Vec<Category>>,
     /// Filter search results by one or more comma-separated tags.
     #[serde(default, deserialize_with = "deserialize_csv")]
+    #[param(explode = false)]
     pub tags: Option<Vec<String>>,
     pub order: Option<OrderColumn>,
     pub dir: Option<OrderDirection>,
