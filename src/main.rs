@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use actix_web::{get, middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, http, middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use phosphor_server::app;
 use serde::Serialize;
 use serde_qs::actix::QsQuery;
@@ -141,7 +141,9 @@ mod icons {
         let db = data.db.lock().unwrap();
         let query = query.into_inner();
         match db.get_icons(&query).await {
-            Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
+            Ok(icons) => HttpResponse::Ok()
+                .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
+                .json(MultipleIconResponse::new(icons)),
             Err(e) => {
                 tracing::error!("Failed to fetch icons for query: {:?}", e);
                 HttpResponse::InternalServerError().finish()
@@ -284,8 +286,8 @@ mod health {
     async fn health_check(data: web::Data<app::AppState>) -> impl Responder {
         match data.db.lock() {
             Ok(db) => {
-                if let Err(_) = db.ping().await {
-                    tracing::error!("Database ping failed");
+                if let Err(e) = db.ping().await {
+                    tracing::error!("Database ping failed: {e}");
                     return HttpResponse::InternalServerError().json(HealthResponse {
                         status: HealthStatus::Degraded,
                     });
@@ -295,8 +297,8 @@ mod health {
                     status: HealthStatus::Healthy,
                 })
             }
-            Err(_) => {
-                tracing::error!("Failed to acquire database lock");
+            Err(e) => {
+                tracing::error!("Failed to acquire database lock: {e}");
                 HttpResponse::ServiceUnavailable().json(HealthResponse {
                     status: HealthStatus::Down,
                 })
