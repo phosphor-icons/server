@@ -30,13 +30,13 @@ impl Database {
         Ok(Database { pool })
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn ping(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        sqlx::query("SELECT 1").fetch_optional(&self.pool).await?;
         Ok(())
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn dump_stats(&self) -> Result<(), sqlx::Error> {
         tracing::info!(
             "Pool stats: total={}, idle={}, used={}",
@@ -47,7 +47,7 @@ impl Database {
         Ok(())
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
         let mut builder: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM icons");
 
@@ -140,7 +140,7 @@ impl Database {
         builder.build_query_as::<Icon>().fetch_all(&self.pool).await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_icon_by_name(&self, name: &str) -> Result<Option<Icon>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM icons WHERE name = $1")
             .bind(name)
@@ -148,7 +148,7 @@ impl Database {
             .await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn upsert_icon(&self, icon: &Icon) -> Result<Icon, sqlx::Error> {
         sqlx::query_as(
             r#"
@@ -188,7 +188,7 @@ impl Database {
         .await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn delete_icon(&self, rid: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM icons WHERE rid = $1")
             .bind(rid)
@@ -197,7 +197,7 @@ impl Database {
         Ok(())
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_icon_by_id(&self, id: i32) -> Result<Option<Icon>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM icons WHERE id = $1")
             .bind(id)
@@ -205,7 +205,7 @@ impl Database {
             .await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_icon_by_rid(&self, rid: &str) -> Result<Option<Icon>, sqlx::Error> {
         sqlx::query_as("SELECT * FROM icons WHERE rid = $1")
             .bind(rid)
@@ -213,7 +213,7 @@ impl Database {
             .await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn query_icons(
         &self,
         name: &str,
@@ -239,7 +239,7 @@ impl Database {
             .await
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn fuzzy_search_icons(&self, search: &IconSearch) -> Result<Vec<Icon>, sqlx::Error> {
         let query = "SELECT * FROM icons WHERE name ILIKE $1".to_string();
         let params = vec![format!("%{}%", &search.q)];
@@ -252,7 +252,7 @@ impl Database {
         todo!("Implement fuzzy search");
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_all_tags(&self) -> Result<Vec<String>, sqlx::Error> {
         #[derive(Debug, sqlx::FromRow)]
         struct Tag(String);
@@ -263,7 +263,7 @@ impl Database {
         Ok(tags.into_iter().map(|t| t.0).collect())
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn get_svg_weights_by_icon_id(
         &self,
         icon_id: i32,
@@ -279,7 +279,7 @@ impl Database {
             .collect::<HashMap<_, _>>())
     }
 
-    #[tracing::instrument(level = "info")]
+    #[tracing::instrument(level = "info", skip(self))]
     pub async fn upsert_svg(&self, svg: &Svg) -> Result<Svg, sqlx::Error> {
         sqlx::query_as(
             r#"

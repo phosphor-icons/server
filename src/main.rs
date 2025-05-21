@@ -1,19 +1,86 @@
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Duration};
 
 use actix_web::{get, http, middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use phosphor_server::app;
 use serde::Serialize;
-use serde_qs::actix::QsQuery;
 use tracing_subscriber::{filter::EnvFilter, prelude::*};
 use utoipa::{self, OpenApi};
 use utoipa_actix_web::{scope, AppExt};
 use utoipa_scalar::{Scalar, Servable as ScalarServable};
 
-mod icons {
-    use std::collections::HashMap;
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Phosphor Icons API",
+        description = include_str!("../public/intro.md"),
+        version = "0.1.0",
+        contact(name = "Phosphor Team", email = "hello@phosphoricons.com"),
+        license(name = "MIT", identifier = "MIT"),
+    ),
+    tags(
+        (
+            name = "Icon endpoints",
+            description = "Search and filter existing, deprecated, and upcoming icons, and retrieve SVG source code for specific icons."
+        ),
+        (name = "Metadata endpoints", description = "Query for metadata about the API, including available categories and tags."),
+        (name = "Other endpoints", description = "Other endpoints"),
+    ),
+)]
+struct Api;
 
+#[actix_web::main]
+async fn main() -> Result<(), std::io::Error> {
+    dotenvy::dotenv().ok();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().pretty())
+        .with(EnvFilter::from_default_env())
+        .init();
+
+    let app = app::AppState::init().await?;
+    let data = web::Data::new(app);
+    let url = std::env::var("HOST").unwrap_or(Ipv4Addr::UNSPECIFIED.to_string());
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse::<u16>()
+        .expect("PORT must be a valid u16");
+
+    HttpServer::new(move || {
+        App::new()
+            .into_utoipa_app()
+            .app_data(data.clone())
+            .map(|app| app.wrap(Logger::default()))
+            .service(
+                scope::scope("/v1")
+                    .service(icons::icon)
+                    .service(icons::all_icons)
+                    .service(icons::search_icons)
+                    .service(categories::categories)
+                    .service(tags::tags),
+            )
+            .service(health::health_check)
+            .openapi_service(|api| {
+                let api = Api::openapi().merge_from(api);
+                Scalar::with_url("/docs", api).custom_html(include_str!("../public/index.html"))
+            })
+            .into_app()
+            .service(health::dump)
+            .service(actix_files::Files::new("/", "./public"))
+    })
+    // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
+    // least one request handler. We should look at real-world utilization once this is public.
+    .workers(8)
+    .keep_alive(Duration::from_secs(2))
+    .bind((url, port))?
+    .run()
+    .await
+}
+
+mod icons {
     use super::*;
     use phosphor_server::{app, db, icons, svgs};
+    use serde_qs::actix::QsQuery;
+    use std::collections::HashMap;
     use utoipa::ToSchema;
 
     #[derive(Serialize, ToSchema)]
@@ -318,84 +385,4 @@ mod health {
             }
         }
     }
-}
-
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "Phosphor Icons API",
-        description = r#"\
-A public REST API exposing catalog information, versioning, and metadata for the [Phosphor Icons](https://phosphoricons.com) library. This service is public, free, and unrestricted – please use responsibly and mindully. To list icon metada and filter by name, tags, and versions, see [/v1/icons](#tag/icon-endpoints/GET/v1/icons). To customize and generate icons as SVG or PNG, see [/v1/icon](#tag/icon-endpoints/GET/v1/icon/{id}).
-
-> [!warning]
-> This API is experimental and subject to change. Use at your own risk.
-
-## Resources
-
-* [@phosphor-icons/core](https://github.com/phosphor-icons/core) – The core package of Phosphor Icons, containing the SVG assets and metadata for all icons.
-* [@phosphor-icons/server](https://github.com/phosphor-icons/server) – The source code for this API, and the very docs you are reading.
-* [@phosphor-icons/homepage](https://github.com/phosphor-icons/homepage) – The repo for our main website and links to libraries, docs, and community ports.
-
-## Acknowledgements
-
-Thanks so much for the open source projects 💜 that power this service. Our API is built with Rust and [Actix Web](https://actix.rs), and this documentation site is generated with [Utoipa](https://github.com/juhaku/utoipa) and beautifully rendered with [Scalar](https://scalar.com/).
-        "#,
-        version = "0.1.0",
-        contact(name = "Phosphor Team", email = "hello@phosphoricons.com"),
-        license(name = "MIT", identifier = "MIT"),
-    ),
-    tags(
-        (name = "Icon endpoints", description = "Search and filter existing, deprecated, and upcoming icons, and retrieve SVG source code for specific icons."),
-        (name = "Metadata endpoints", description = "Query for metadata about the API, including available categories and tags."),
-        (name = "Other endpoints", description = "Other endpoints"),
-    ),
-)]
-struct Api;
-
-#[actix_web::main]
-async fn main() -> Result<(), std::io::Error> {
-    dotenvy::dotenv().ok();
-
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().pretty())
-        .with(EnvFilter::from_default_env())
-        .init();
-
-    let app = app::AppState::init().await?;
-    let data = web::Data::new(app);
-    let url = std::env::var("HOST").unwrap_or(Ipv4Addr::UNSPECIFIED.to_string());
-    let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
-        .parse::<u16>()
-        .expect("PORT must be a valid u16");
-
-    HttpServer::new(move || {
-        App::new()
-            .into_utoipa_app()
-            .app_data(data.clone())
-            .map(|app| app.wrap(Logger::default()))
-            .service(
-                scope::scope("/v1")
-                    .service(icons::icon)
-                    .service(icons::all_icons)
-                    .service(icons::search_icons)
-                    .service(categories::categories)
-                    .service(tags::tags),
-            )
-            .service(health::health_check)
-            .openapi_service(|api| {
-                let api = Api::openapi().merge_from(api);
-                Scalar::with_url("/docs", api).custom_html(include_str!("../public/index.html"))
-            })
-            .into_app()
-            .service(health::dump)
-            .service(actix_files::Files::new("/", "./public"))
-    })
-    // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
-    // least one request handler. We should look at real-world utilization once this is public.
-    .workers(8)
-    .bind((url, port))?
-    .run()
-    .await
 }
