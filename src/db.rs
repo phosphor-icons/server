@@ -1,7 +1,8 @@
 use crate::icons::{Category, Icon, IconStatus, IconWeight};
 use crate::svgs::Svg;
 use serde::{Deserialize, Deserializer};
-use sqlx::{migrate::Migrator, PgPool, Pool, Postgres, QueryBuilder};
+use sqlx::postgres::PgPoolOptions;
+use sqlx::{migrate::Migrator, Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
@@ -18,7 +19,11 @@ impl Database {
     #[tracing::instrument(level = "info")]
     pub async fn init() -> Result<Self, sqlx::Error> {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
-        let pool = PgPool::connect(&database_url).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(50)
+            .test_before_acquire(false)
+            .connect(&database_url)
+            .await?;
 
         MIGRATOR.run(&pool).await?;
 
