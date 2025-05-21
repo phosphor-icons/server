@@ -305,6 +305,19 @@ mod health {
             }
         }
     }
+
+    #[get("/dump")]
+    #[tracing::instrument(level = "info")]
+    pub async fn dump(data: web::Data<app::AppState>) -> impl Responder {
+        let db = data.db.lock().unwrap();
+        match db.dump_stats().await {
+            Ok(_) => HttpResponse::Ok().finish(),
+            Err(e) => {
+                tracing::error!("Failed to dump database: {e}");
+                HttpResponse::InternalServerError().finish()
+            }
+        }
+    }
 }
 
 #[derive(OpenApi)]
@@ -376,6 +389,7 @@ async fn main() -> Result<(), std::io::Error> {
                 Scalar::with_url("/docs", api).custom_html(include_str!("../public/index.html"))
             })
             .into_app()
+            .service(health::dump)
             .service(actix_files::Files::new("/", "./public"))
     })
     // NOTE: the app requires a minimum of 3 workers to run the docs server, dispatch, and at
