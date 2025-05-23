@@ -3,47 +3,84 @@ use sqlx::{postgres::PgRow, FromRow, Row};
 use std::{fmt::Display, str::FromStr};
 use utoipa::ToSchema;
 
-#[derive(Debug, Default, Serialize, ToSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "PascalCase")]
 pub struct Icon {
     /// The unique ID of the icon in the database.
+    #[serde(default)]
     #[schema(example = 2884)]
     pub id: i32,
+
+    #[serde(rename = "Row ID")]
     #[schema(example = "96cR4kqjHO16pBVCiXg_Ep")]
     pub rid: String,
+
     /// The kebab-case name of the icon.
     #[schema(example = "cube")]
     pub name: String,
+
     /// An optional kebab-case alias for the icon, usually a deprecated name.
+    #[serde(deserialize_with = "deserialize_string_or_none")]
     pub alias: Option<String>,
+
     /// The decimal representation of an icon's unicode codepoint, as implemented in
     /// [@phosphor-icons/web](https://github.com/phosphor-icons/web) and other font-based
     /// libraries.
+    #[serde(
+        rename = "Codepoint",
+        deserialize_with = "deserialize_string_to_opt_i32"
+    )]
     #[schema(example = 57818)]
     pub code: Option<i32>,
+
     /// The implementation status of the icon in the design process.
     #[schema(example = "Implemented")]
     pub status: IconStatus,
+
     /// A list of categories the icon belongs to, used for filtering in the API.
+    #[serde(
+        rename = "Search Categories",
+        deserialize_with = "deserialize_categories"
+    )]
     #[schema(example = json!(["Design", "Games", "Objects"]))]
     pub search_categories: Vec<Category>,
+
     /// A string representing the category the icon belongs to in the Figma library, not used for
     /// filtering in the API.
     pub category: FigmaCategory,
+
     /// A list of string tags associated with the icon.
+    #[serde(deserialize_with = "deserialize_string_array")]
     #[schema(example = json!(["square", "box", "3d", "volume", "blocks"]))]
     pub tags: Vec<String>,
+
+    #[serde(deserialize_with = "deserialize_string_or_none")]
     pub notes: Option<String>,
+
     /// A float in the format `<major>.<minor>` representing the version in which the icon was
     /// released.
+    #[serde(rename = "Release", deserialize_with = "deserialize_string_to_opt_f64")]
     #[schema(example = 1.0)]
     pub released_at: Option<f64>,
+
     /// A float in the format `<major>.<minor>` representing the version in which the icon was last
     /// updated.
+    #[serde(
+        rename = "Last Updated",
+        deserialize_with = "deserialize_string_to_opt_f64"
+    )]
     pub last_updated_at: Option<f64>,
+
     /// A float in the format `<major>.<minor>` representing the version in which the icon was
     /// deprecated.
+    #[serde(
+        rename = "Deprecated",
+        deserialize_with = "deserialize_string_to_opt_f64"
+    )]
     pub deprecated_at: Option<f64>,
+
     /// A boolean indicating whether the icon is published in the library.
+    #[serde(deserialize_with = "deserialize_stringbool")]
     #[schema(example = true)]
     pub published: bool,
 }
@@ -93,6 +130,75 @@ impl FromRow<'_, PgRow> for Icon {
             published,
         })
     }
+}
+
+fn deserialize_stringbool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    match s.to_uppercase().as_str() {
+        "Y" => Ok(true),
+        "N" | "" => Ok(false),
+        _ => {
+            tracing::warn!("expected 'Y' or 'N', got '{s}'");
+            Ok(false)
+        }
+    }
+}
+
+fn deserialize_string_or_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    if s.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(s))
+    }
+}
+
+fn deserialize_string_array<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: String = String::deserialize(deserializer)?;
+    let values: Vec<String> = value.split(", ").map(|s| s.to_string()).collect();
+    Ok(values)
+}
+
+fn deserialize_string_to_opt_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let i = s.parse::<i32>().map_err(serde::de::Error::custom)?;
+    Ok(Some(i))
+}
+
+#[allow(unused)]
+fn deserialize_string_to_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    s.parse::<f64>().map_err(serde::de::Error::custom)
+}
+
+fn deserialize_string_to_opt_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = Deserialize::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let i = s.parse::<f64>().map_err(serde::de::Error::custom)?;
+    Ok(Some(i))
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, ToSchema)]
@@ -389,6 +495,22 @@ impl FromStr for Category {
     }
 }
 
+fn deserialize_categories<'de, D>(deserializer: D) -> Result<Vec<Category>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let categories: String = String::deserialize(deserializer)?;
+    let categories: Vec<&str> = categories.split(", ").collect();
+    let mut result = Vec::new();
+    for category in categories {
+        match Category::from_str(&category) {
+            Ok(cat) => result.push(cat),
+            Err(_) => result.push(Category::Unknown),
+        }
+    }
+    Ok(result)
+}
+
 impl std::fmt::Display for Category {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -412,5 +534,27 @@ impl std::fmt::Display for Category {
             Category::Weather => write!(f, "Weather"),
             Category::Unknown => write!(f, "Unknown"),
         }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LibraryInfo {
+    /// The current version of the library.
+    #[schema(example = 2.1f64)]
+    pub version: f64,
+    /// The total number of published icons as of the current version.
+    #[schema(example = 1512)]
+    pub count: usize,
+}
+
+impl FromRow<'_, PgRow> for LibraryInfo {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
+        let version: f64 = row.try_get("version")?;
+        let count: i64 = row.try_get("count")?;
+
+        Ok(LibraryInfo {
+            version,
+            count: count as usize,
+        })
     }
 }

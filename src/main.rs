@@ -1,8 +1,7 @@
-use std::{net::Ipv4Addr, time::Duration};
-
 use actix_web::{get, http, middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use phosphor_server::app;
 use serde::Serialize;
+use std::{net::Ipv4Addr, time::Duration};
 use tracing_subscriber::{filter::EnvFilter, prelude::*};
 use utoipa::{self, OpenApi};
 use utoipa_actix_web::{scope, AppExt};
@@ -55,8 +54,9 @@ async fn main() -> Result<(), std::io::Error> {
                     .service(icons::icon)
                     .service(icons::all_icons)
                     .service(icons::search_icons)
-                    .service(categories::categories)
-                    .service(tags::tags),
+                    .service(metadata::info)
+                    .service(metadata::categories)
+                    .service(metadata::tags),
             )
             .service(health::health_check)
             .openapi_service(|api| {
@@ -153,27 +153,31 @@ mod icons {
     #[get("/icon/{id}")]
     #[tracing::instrument(level = "info")]
     async fn icon(data: web::Data<app::AppState>, id: web::Path<i32>) -> impl Responder {
-        let db = data.db.lock().unwrap();
         let id = id.into_inner();
-        dbg!(id);
-        match db.get_icon_by_id(id).await {
-            Ok(Some(icon)) => {
-                if let Ok(svgmap) = db.get_svg_weights_by_icon_id(id).await {
-                    let svgs = IconWeightMap::from(svgmap);
-                    HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
-                } else {
-                    tracing::error!("Failed to fetch SVGs for icon: {}", id);
-                    HttpResponse::InternalServerError().finish()
-                }
-            }
-            Ok(None) => {
-                tracing::info!("Icon not found: {}", id);
-                HttpResponse::NotFound().finish()
-            }
-            Err(_) => {
-                tracing::error!("Failed to fetch icons");
+        match data.db.lock() {
+            Err(e) => {
+                tracing::error!("Failed to acquire database lock: {e}");
                 HttpResponse::InternalServerError().finish()
             }
+            Ok(db) => match db.get_icon_by_id(id).await {
+                Ok(Some(icon)) => {
+                    if let Ok(svgmap) = db.get_svg_weights_by_icon_id(id).await {
+                        let svgs = IconWeightMap::from(svgmap);
+                        HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
+                    } else {
+                        tracing::error!("Failed to fetch SVGs for icon: {}", id);
+                        HttpResponse::InternalServerError().finish()
+                    }
+                }
+                Ok(None) => {
+                    tracing::info!("Icon not found: {}", id);
+                    HttpResponse::NotFound().finish()
+                }
+                Err(_) => {
+                    tracing::error!("Failed to fetch icons");
+                    HttpResponse::InternalServerError().finish()
+                }
+            },
         }
     }
 
@@ -205,16 +209,21 @@ mod icons {
         data: web::Data<app::AppState>,
         query: QsQuery<db::IconQuery>,
     ) -> impl Responder {
-        let db = data.db.lock().unwrap();
         let query = query.into_inner();
-        match db.get_icons(&query).await {
-            Ok(icons) => HttpResponse::Ok()
-                .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                .json(MultipleIconResponse::new(icons)),
+        match data.db.lock() {
             Err(e) => {
-                tracing::error!("Failed to fetch icons for query: {:?}", e);
+                tracing::error!("Failed to acquire database lock: {e}");
                 HttpResponse::InternalServerError().finish()
             }
+            Ok(db) => match db.get_icons(&query).await {
+                Ok(icons) => HttpResponse::Ok()
+                    .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
+                    .json(MultipleIconResponse::new(icons)),
+                Err(e) => {
+                    tracing::error!("Failed to fetch icons for query: {:?}", e);
+                    HttpResponse::InternalServerError().finish()
+                }
+            },
         }
     }
 
@@ -234,22 +243,53 @@ mod icons {
         data: web::Data<app::AppState>,
         search: web::Query<db::IconSearch>,
     ) -> impl Responder {
-        let db = data.db.lock().unwrap();
         let search = search.into_inner();
-        match db.fuzzy_search_icons(&search).await {
-            Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
-            Err(_) => {
-                tracing::error!("Failed to fetch icon: {:?}", search);
+        match data.db.lock() {
+            Err(e) => {
+                tracing::error!("Failed to acquire database lock: {e}");
                 HttpResponse::InternalServerError().finish()
             }
+            Ok(db) => match db.fuzzy_search_icons(&search).await {
+                Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
+                Err(_) => {
+                    tracing::error!("Failed to fetch icon: {:?}", search);
+                    HttpResponse::InternalServerError().finish()
+                }
+            },
         }
     }
 }
 
-mod categories {
+mod metadata {
     use super::*;
     use phosphor_server::icons;
     use utoipa::ToSchema;
+
+    #[utoipa::path(
+        description = "Describe the current state of the library, including the most recent version and the number of icons.",
+        responses(
+            (status = OK, description = "LibraryInfo", body = icons::LibraryInfo),
+            (status = INTERNAL_SERVER_ERROR, description = "Internal server error"),
+        ),
+        tag = "Metadata endpoints",
+    )]
+    #[get("/info")]
+    #[tracing::instrument(level = "info")]
+    async fn info(data: web::Data<app::AppState>) -> impl Responder {
+        match data.db.lock() {
+            Err(e) => {
+                tracing::error!("Failed to acquire database lock: {e}");
+                return HttpResponse::InternalServerError().finish();
+            }
+            Ok(db) => match db.get_library_info().await {
+                Ok(info) => HttpResponse::Ok().json(info),
+                Err(e) => {
+                    tracing::error!("Failed to fetch library info: {e}");
+                    HttpResponse::InternalServerError().finish()
+                }
+            },
+        }
+    }
 
     #[derive(Serialize, ToSchema)]
     struct CategoriesResponse {
@@ -271,11 +311,6 @@ mod categories {
             count: icons::Category::COUNT,
         })
     }
-}
-
-mod tags {
-    use super::*;
-    use utoipa::ToSchema;
 
     #[derive(Serialize, ToSchema)]
     struct TagsResponse {
@@ -294,16 +329,21 @@ mod tags {
     #[get("/tags")]
     #[tracing::instrument(level = "info")]
     async fn tags(data: web::Data<app::AppState>) -> impl Responder {
-        let db = data.db.lock().unwrap();
-        match db.get_all_tags().await {
-            Ok(tags) => {
-                let count = tags.len();
-                HttpResponse::Ok().json(TagsResponse { tags, count })
+        match data.db.lock() {
+            Err(e) => {
+                tracing::error!("Failed to acquire database lock: {e}");
+                return HttpResponse::InternalServerError().finish();
             }
-            Err(_) => {
-                tracing::error!("Failed to fetch tags");
-                HttpResponse::InternalServerError().finish()
-            }
+            Ok(db) => match db.get_all_tags().await {
+                Ok(tags) => {
+                    let count = tags.len();
+                    HttpResponse::Ok().json(TagsResponse { tags, count })
+                }
+                Err(_) => {
+                    tracing::error!("Failed to fetch tags");
+                    HttpResponse::InternalServerError().finish()
+                }
+            },
         }
     }
 }

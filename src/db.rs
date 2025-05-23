@@ -1,4 +1,4 @@
-use crate::icons::{Category, Icon, IconStatus, IconWeight};
+use crate::icons::{Category, Icon, IconStatus, IconWeight, LibraryInfo};
 use crate::svgs::Svg;
 use serde::{Deserialize, Deserializer};
 use sqlx::postgres::PgPoolOptions;
@@ -47,10 +47,13 @@ impl Database {
         Ok(())
     }
 
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
-        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM icons");
-
+    #[tracing::instrument(level = "info", skip(init))]
+    fn build_query_from_params(
+        init: impl Into<String>,
+        query: &IconQuery,
+        orderable: bool,
+    ) -> QueryBuilder<'_, Postgres> {
+        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(init);
         builder.push(" WHERE ");
 
         match query.published {
@@ -121,23 +124,40 @@ impl Database {
             }
         }
 
-        let dir = query.dir.unwrap_or_default();
-        match query.order {
-            None | Some(OrderColumn::Name) => {
-                builder.push(format!(" ORDER BY name {}", dir));
-            }
-            Some(OrderColumn::Status) => {
-                builder.push(format!(" ORDER BY status {}", dir));
-            }
-            Some(OrderColumn::Release) => {
-                builder.push(format!(" ORDER BY released_at {}", dir));
-            }
-            Some(OrderColumn::Code) => {
-                builder.push(format!(" ORDER BY code {}", dir));
+        if orderable {
+            let dir = query.dir.unwrap_or_default();
+            match query.order {
+                None | Some(OrderColumn::Name) => {
+                    builder.push(format!(" ORDER BY name {}", dir));
+                }
+                Some(OrderColumn::Status) => {
+                    builder.push(format!(" ORDER BY status {}", dir));
+                }
+                Some(OrderColumn::Release) => {
+                    builder.push(format!(" ORDER BY released_at {}", dir));
+                }
+                Some(OrderColumn::Code) => {
+                    builder.push(format!(" ORDER BY code {}", dir));
+                }
             }
         }
 
+        builder
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
+        let mut builder = Self::build_query_from_params("SELECT * FROM icons", query, true);
         builder.build_query_as::<Icon>().fetch_all(&self.pool).await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn count_icons(&self, query: &IconQuery) -> Result<i64, sqlx::Error> {
+        let mut builder = Self::build_query_from_params("SELECT COUNT(*) FROM icons", query, false);
+        builder
+            .build_query_scalar::<i64>()
+            .fetch_one(&self.pool)
+            .await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
@@ -156,7 +176,7 @@ impl Database {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
             ON CONFLICT (rid)
             DO UPDATE SET
-                name = EXCLUDED.name
+                name = EXCLUDED.name,
                 status = EXCLUDED.status,
                 category = EXCLUDED.category,
                 search_categories = EXCLUDED.search_categories,
@@ -295,6 +315,13 @@ impl Database {
         .bind(&svg.src)
         .fetch_one(&self.pool)
         .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_library_info(&self) -> Result<LibraryInfo, sqlx::Error> {
+        sqlx::query_as("SELECT COUNT(*) as count, MAX(released_at) as version FROM icons WHERE published = TRUE")
+            .fetch_one(&self.pool)
+            .await
     }
 }
 

@@ -4,30 +4,18 @@ use tokio::fs;
 
 #[derive(Debug)]
 pub struct AppState {
-    pub client: Mutex<table::TableClient>,
     pub db: Mutex<db::Database>,
 }
 
 impl AppState {
     #[tracing::instrument(level = "info")]
     pub async fn init() -> Result<Self, std::io::Error> {
-        let table_client = table::TableClient::init().await.map_err(|_| {
-            tracing::error!("Failed to initialize table client");
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to initialize table client",
-            )
-        })?;
-
         let db = db::Database::init().await.map_err(|_| {
             tracing::error!("Failed to initialize database");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to initialize database")
         })?;
 
-        let mut app = AppState {
-            client: Mutex::new(table_client),
-            db: Mutex::new(db),
-        };
+        let mut app = AppState { db: Mutex::new(db) };
 
         if let Ok(val) = std::env::var("PHOSPHOR_TABLE_SYNC") {
             tracing::info!("PHOSPHOR_TABLE_SYNC={}", val);
@@ -50,8 +38,7 @@ impl AppState {
     async fn sync_table(&mut self) -> Result<(), std::io::Error> {
         tracing::info!("Syncing table client");
 
-        let client = self.client.lock().unwrap();
-        let icons = client.sync().await.map_err(|_| {
+        let icons = table::TableClient::sync().await.map_err(|_| {
             tracing::error!("Failed to sync table client");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to sync table client")
         })?;
@@ -59,7 +46,7 @@ impl AppState {
         let db = self.db.lock().unwrap();
         for icon in icons {
             db.upsert_icon(&icon).await.map_err(|e| {
-                tracing::error!("Failed to upsert icon: {:?}", e);
+                tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
                 std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
             })?;
         }
