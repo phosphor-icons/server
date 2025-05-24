@@ -1,4 +1,4 @@
-use crate::{db, icons::IconWeight, svgs, table};
+use crate::{db, icons, svgs, table};
 use std::sync::Mutex;
 use tokio::fs;
 
@@ -45,10 +45,12 @@ impl AppState {
 
         let db = self.db.lock().unwrap();
         for icon in icons {
-            db.upsert_icon(&icon).await.map_err(|e| {
-                tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
-                std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
-            })?;
+            db.upsert_icon(&icons::Icon::from(icon.clone()))
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
+                    std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
+                })?;
         }
 
         Ok(())
@@ -59,9 +61,9 @@ impl AppState {
         const ASSETS_DIR: &str = "./core/assets";
         tracing::info!("Syncing assets");
 
-        let mut files: Vec<(String, IconWeight)> = Vec::new();
+        let mut files: Vec<(String, icons::IconWeight)> = Vec::new();
 
-        for weight in IconWeight::ALL {
+        for weight in icons::IconWeight::ALL {
             let path = format!("{}/{}", ASSETS_DIR, weight.to_string());
             let mut dir = fs::read_dir(&path).await?;
 
