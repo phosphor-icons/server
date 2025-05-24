@@ -20,8 +20,9 @@ impl Database {
     pub async fn init() -> Result<Self, sqlx::Error> {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
         let pool = PgPoolOptions::new()
-            .max_connections(6)
-            .test_before_acquire(true)
+            .acquire_timeout(std::time::Duration::from_secs(4))
+            .max_connections(14)
+            .test_before_acquire(false)
             .connect(&database_url)
             .await?;
 
