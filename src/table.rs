@@ -123,12 +123,16 @@ where
     D: serde::Deserializer<'de>,
 {
     let categories: String = String::deserialize(deserializer)?;
-    let categories: Vec<&str> = categories.split(", ").collect();
+    let re = regex::Regex::new(r"\W+").unwrap();
+    let categories: Vec<&str> = re.split(&categories).collect();
     let mut result = Vec::new();
     for category in categories {
         match Category::from_str(&category) {
             Ok(cat) => result.push(cat),
-            Err(_) => result.push(Category::Unknown),
+            Err(_) => {
+                tracing::warn!("Unknown category: {category}");
+                result.push(Category::Unknown)
+            }
         }
     }
     Ok(result)

@@ -1594,6 +1594,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "dotenvy",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

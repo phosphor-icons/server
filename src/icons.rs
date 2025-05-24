@@ -369,7 +369,6 @@ pub enum Category {
     People,
     System,
     Weather,
-    #[serde(other)]
     Unknown,
 }
 
