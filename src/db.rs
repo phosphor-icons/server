@@ -39,15 +39,22 @@ impl Db {
         let mut cond = Condition::all();
 
         if let Some(name) = &query.name {
-            cond = cond.add(icons::Column::Name.eq(name));
+            let comp = if name.starts_with('*') || name.ends_with('*') {
+                let trimmed = name.trim_matches('*');
+                if trimmed.is_empty() {
+                    return cond; // If the name is just '*', return empty condition
+                }
+                icons::Column::Name.like(format!("%{}%", trimmed))
+            } else {
+                icons::Column::Name.eq(name)
+            };
+            cond = cond.add(comp);
         }
 
-        if let Some(published) = &query.published {
-            match published {
-                Ternary::True => cond = cond.add(icons::Column::Published.eq(true)),
-                Ternary::False => cond = cond.add(icons::Column::Published.eq(false)),
-                Ternary::Any => {}
-            }
+        match &query.published {
+            Some(Ternary::True) | None => cond = cond.add(icons::Column::Published.eq(true)),
+            Some(Ternary::False) => cond = cond.add(icons::Column::Published.eq(false)),
+            Some(Ternary::Any) => {}
         }
 
         if let Some(released) = &query.released {
@@ -300,7 +307,7 @@ pub struct IconSearch {
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query, style = Form)]
 pub struct IconQuery {
-    /// Filter search results by kebab-case icon name.
+    /// Filter search results by kebab-case icon name. Supports wildcards (`*`) at the beginning and/or end of expression.
     pub name: Option<String>,
     /// Filter search results by version or version ranges in which they were published, including exact
     /// versions (`2.1`), open-ended inclusive ranges (`..1.4` or `2.0..`), and closed inclusive
