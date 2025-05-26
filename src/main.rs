@@ -154,31 +154,25 @@ mod icons {
     #[tracing::instrument(level = "info")]
     async fn icon(data: web::Data<app::AppState>, id: web::Path<i32>) -> impl Responder {
         let id = id.into_inner();
-        match data.db.lock() {
-            Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
-                HttpResponse::InternalServerError().finish()
-            }
-            Ok(db) => match db.get_icon_by_id(id).await {
-                Ok(Some(icon)) => {
-                    let icon = icons::Icon::from(icon);
-                    if let Ok(svgmap) = db.get_icon_weights_by_icon_id(id).await {
-                        let svgs = IconWeightMap::from(svgmap);
-                        HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
-                    } else {
-                        tracing::error!("Failed to fetch SVGs for icon: {}", id);
-                        HttpResponse::InternalServerError().finish()
-                    }
-                }
-                Ok(None) => {
-                    tracing::info!("Icon not found: {}", id);
-                    HttpResponse::NotFound().finish()
-                }
-                Err(_) => {
-                    tracing::error!("Failed to fetch icons");
+        match data.db.get_icon_by_id(id).await {
+            Ok(Some(icon)) => {
+                let icon = icons::Icon::from(icon);
+                if let Ok(svgmap) = data.db.get_icon_weights_by_icon_id(id).await {
+                    let svgs = IconWeightMap::from(svgmap);
+                    HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
+                } else {
+                    tracing::error!("Failed to fetch SVGs for icon: {}", id);
                     HttpResponse::InternalServerError().finish()
                 }
-            },
+            }
+            Ok(None) => {
+                tracing::info!("Icon not found: {}", id);
+                HttpResponse::NotFound().finish()
+            }
+            Err(_) => {
+                tracing::error!("Failed to fetch icons");
+                HttpResponse::InternalServerError().finish()
+            }
         }
     }
 
@@ -211,23 +205,17 @@ mod icons {
         query: QsQuery<db::IconQuery>,
     ) -> impl Responder {
         let query = query.into_inner();
-        match data.db.lock() {
+        match data.db.get_icons(&query).await {
+            Ok(icons) => {
+                let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
+                HttpResponse::Ok()
+                    .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
+                    .json(MultipleIconResponse::new(icons))
+            }
             Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
+                tracing::error!("Failed to fetch icons for query: {:?}", e);
                 HttpResponse::InternalServerError().finish()
             }
-            Ok(db) => match db.get_icons(&query).await {
-                Ok(icons) => {
-                    let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
-                    HttpResponse::Ok()
-                        .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                        .json(MultipleIconResponse::new(icons))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to fetch icons for query: {:?}", e);
-                    HttpResponse::InternalServerError().finish()
-                }
-            },
         }
     }
 
@@ -248,21 +236,15 @@ mod icons {
         search: web::Query<db::IconSearch>,
     ) -> impl Responder {
         let search = search.into_inner();
-        match data.db.lock() {
-            Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
+        match data.db.query_icons(&search).await {
+            Ok(icons) => {
+                let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
+                HttpResponse::Ok().json(MultipleIconResponse::new(icons))
+            }
+            Err(_) => {
+                tracing::error!("Failed to fetch icon: {:?}", search);
                 HttpResponse::InternalServerError().finish()
             }
-            Ok(db) => match db.query_icons(&search).await {
-                Ok(icons) => {
-                    let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
-                    HttpResponse::Ok().json(MultipleIconResponse::new(icons))
-                }
-                Err(_) => {
-                    tracing::error!("Failed to fetch icon: {:?}", search);
-                    HttpResponse::InternalServerError().finish()
-                }
-            },
         }
     }
 }
@@ -283,18 +265,12 @@ mod metadata {
     #[get("/info")]
     #[tracing::instrument(level = "info")]
     async fn info(data: web::Data<app::AppState>) -> impl Responder {
-        match data.db.lock() {
+        match data.db.get_library_info().await {
+            Ok(info) => HttpResponse::Ok().json(info),
             Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
-                return HttpResponse::InternalServerError().finish();
+                tracing::error!("Failed to fetch library info: {e}");
+                HttpResponse::InternalServerError().finish()
             }
-            Ok(db) => match db.get_library_info().await {
-                Ok(info) => HttpResponse::Ok().json(info),
-                Err(e) => {
-                    tracing::error!("Failed to fetch library info: {e}");
-                    HttpResponse::InternalServerError().finish()
-                }
-            },
         }
     }
 
@@ -336,21 +312,15 @@ mod metadata {
     #[get("/tags")]
     #[tracing::instrument(level = "info")]
     async fn tags(data: web::Data<app::AppState>) -> impl Responder {
-        match data.db.lock() {
-            Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
-                return HttpResponse::InternalServerError().finish();
+        match data.db.get_all_tags().await {
+            Ok(tags) => {
+                let count = tags.len();
+                HttpResponse::Ok().json(TagsResponse { tags, count })
             }
-            Ok(db) => match db.get_all_tags().await {
-                Ok(tags) => {
-                    let count = tags.len();
-                    HttpResponse::Ok().json(TagsResponse { tags, count })
-                }
-                Err(_) => {
-                    tracing::error!("Failed to fetch tags");
-                    HttpResponse::InternalServerError().finish()
-                }
-            },
+            Err(_) => {
+                tracing::error!("Failed to fetch tags");
+                HttpResponse::InternalServerError().finish()
+            }
         }
     }
 }
@@ -398,33 +368,22 @@ mod health {
     #[get("/health")]
     #[tracing::instrument(level = "info")]
     async fn health_check(data: web::Data<app::AppState>) -> impl Responder {
-        match data.db.lock() {
-            Ok(db) => {
-                if let Err(e) = db.ping().await {
-                    tracing::error!("Database ping failed: {e}");
-                    return HttpResponse::InternalServerError().json(HealthResponse {
-                        status: HealthStatus::Degraded,
-                    });
-                }
-
-                HttpResponse::Ok().json(HealthResponse {
-                    status: HealthStatus::Healthy,
-                })
-            }
-            Err(e) => {
-                tracing::error!("Failed to acquire database lock: {e}");
-                HttpResponse::ServiceUnavailable().json(HealthResponse {
-                    status: HealthStatus::Down,
-                })
-            }
+        if let Err(e) = data.db.ping().await {
+            tracing::error!("Database ping failed: {e}");
+            return HttpResponse::InternalServerError().json(HealthResponse {
+                status: HealthStatus::Degraded,
+            });
         }
+
+        HttpResponse::Ok().json(HealthResponse {
+            status: HealthStatus::Healthy,
+        })
     }
 
     #[get("/dump")]
     #[tracing::instrument(level = "info")]
     pub async fn dump(data: web::Data<app::AppState>) -> impl Responder {
-        let db = data.db.lock().unwrap();
-        match db.dump_stats().await {
+        match data.db.dump_stats().await {
             Ok(_) => HttpResponse::Ok().finish(),
             Err(e) => {
                 tracing::error!("Failed to dump database: {e:?}");

@@ -1,10 +1,9 @@
 use crate::{db, icons, svgs, table};
-use std::sync::Mutex;
 use tokio::fs;
 
 #[derive(Debug)]
 pub struct AppState {
-    pub db: Mutex<db::Db>,
+    pub db: db::Db,
 }
 
 impl AppState {
@@ -15,7 +14,7 @@ impl AppState {
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to initialize database")
         })?;
 
-        let mut app = AppState { db: Mutex::new(db) };
+        let mut app = AppState { db };
 
         if let Ok(val) = std::env::var("PHOSPHOR_TABLE_SYNC") {
             tracing::info!("PHOSPHOR_TABLE_SYNC={}", val);
@@ -42,12 +41,14 @@ impl AppState {
             tracing::error!("Failed to sync table client");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to sync table client")
         })?;
-        let db = self.db.lock().unwrap();
         for icon in icons {
-            db.upsert_icon(icon.clone().into()).await.map_err(|e| {
-                tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
-                std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
-            })?;
+            self.db
+                .upsert_icon(icon.clone().into())
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
+                    std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
+                })?;
         }
 
         Ok(())
@@ -88,15 +89,14 @@ impl AppState {
                     .replace("-bold.svg", "")
                     .replace(".svg", "")
                     .to_string();
-                let db = self.db.lock().unwrap();
-                if let Some(icon) = db.get_icon_by_name(&name).await.unwrap() {
+                if let Some(icon) = self.db.get_icon_by_name(&name).await.unwrap() {
                     let svg = svgs::Svg {
                         id: 0,
                         icon_id: icon.id,
                         weight: weight.clone(),
                         src: contents,
                     };
-                    db.upsert_svg(svg.clone().into()).await.unwrap();
+                    self.db.upsert_svg(svg.clone().into()).await.unwrap();
                     tracing::info!("Upserted SVG: {} - {:?}", name, weight);
                 } else {
                     tracing::warn!("Icon not found in database: {}", name);
