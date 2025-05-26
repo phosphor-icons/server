@@ -78,7 +78,7 @@ async fn main() -> Result<(), std::io::Error> {
 
 mod icons {
     use super::*;
-    use phosphor_server::{app, db, icons, svgs};
+    use phosphor_server::{app, db, entities, icons};
     use serde_qs::actix::QsQuery;
     use std::collections::HashMap;
     use utoipa::ToSchema;
@@ -99,31 +99,31 @@ mod icons {
         duotone: String,
     }
 
-    impl From<HashMap<icons::IconWeight, svgs::Svg>> for IconWeightMap {
-        fn from(map: HashMap<icons::IconWeight, svgs::Svg>) -> Self {
+    impl From<HashMap<String, entities::svgs::Model>> for IconWeightMap {
+        fn from(map: HashMap<String, entities::svgs::Model>) -> Self {
             Self {
                 regular: map
-                    .get(&icons::IconWeight::Regular)
+                    .get(&icons::IconWeight::Regular.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
                 thin: map
-                    .get(&icons::IconWeight::Thin)
+                    .get(&icons::IconWeight::Thin.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
                 light: map
-                    .get(&icons::IconWeight::Light)
+                    .get(&icons::IconWeight::Light.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
                 bold: map
-                    .get(&icons::IconWeight::Bold)
+                    .get(&icons::IconWeight::Bold.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
                 fill: map
-                    .get(&icons::IconWeight::Fill)
+                    .get(&icons::IconWeight::Fill.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
                 duotone: map
-                    .get(&icons::IconWeight::Duotone)
+                    .get(&icons::IconWeight::Duotone.to_string())
                     .map(|s| s.src.clone())
                     .unwrap_or_default(),
             }
@@ -161,7 +161,8 @@ mod icons {
             }
             Ok(db) => match db.get_icon_by_id(id).await {
                 Ok(Some(icon)) => {
-                    if let Ok(svgmap) = db.get_svg_weights_by_icon_id(id).await {
+                    let icon = icons::Icon::from(icon);
+                    if let Ok(svgmap) = db.get_icon_weights_by_icon_id(id).await {
                         let svgs = IconWeightMap::from(svgmap);
                         HttpResponse::Ok().json(SingleIconResponse { icon, svgs })
                     } else {
@@ -216,9 +217,12 @@ mod icons {
                 HttpResponse::InternalServerError().finish()
             }
             Ok(db) => match db.get_icons(&query).await {
-                Ok(icons) => HttpResponse::Ok()
-                    .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                    .json(MultipleIconResponse::new(icons)),
+                Ok(icons) => {
+                    let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
+                    HttpResponse::Ok()
+                        .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
+                        .json(MultipleIconResponse::new(icons))
+                }
                 Err(e) => {
                     tracing::error!("Failed to fetch icons for query: {:?}", e);
                     HttpResponse::InternalServerError().finish()
@@ -249,8 +253,11 @@ mod icons {
                 tracing::error!("Failed to acquire database lock: {e}");
                 HttpResponse::InternalServerError().finish()
             }
-            Ok(db) => match db.fuzzy_search_icons(&search).await {
-                Ok(icons) => HttpResponse::Ok().json(MultipleIconResponse::new(icons)),
+            Ok(db) => match db.query_icons(&search).await {
+                Ok(icons) => {
+                    let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
+                    HttpResponse::Ok().json(MultipleIconResponse::new(icons))
+                }
                 Err(_) => {
                     tracing::error!("Failed to fetch icon: {:?}", search);
                     HttpResponse::InternalServerError().finish()
@@ -420,7 +427,7 @@ mod health {
         match db.dump_stats().await {
             Ok(_) => HttpResponse::Ok().finish(),
             Err(e) => {
-                tracing::error!("Failed to dump database: {e}");
+                tracing::error!("Failed to dump database: {e:?}");
                 HttpResponse::InternalServerError().finish()
             }
         }

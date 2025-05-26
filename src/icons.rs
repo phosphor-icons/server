@@ -1,9 +1,9 @@
+use sea_orm::FromQueryResult;
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgRow, FromRow, Row};
 use std::{fmt::Display, str::FromStr};
 use utoipa::ToSchema;
 
-use crate::table::TableIcon;
+use crate::{entities, table::TableIcon};
 
 #[derive(Debug, Default, Serialize, ToSchema)]
 pub struct Icon {
@@ -64,50 +64,28 @@ pub struct Icon {
     pub published: bool,
 }
 
-impl FromRow<'_, PgRow> for Icon {
-    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
-        let id = row.try_get("id")?;
-        let rid: String = row.try_get("rid")?;
-        let name: String = row.try_get("name")?;
-
-        let status: String = row.try_get("status")?;
-        let status = IconStatus::from_str(&status).unwrap_or(IconStatus::None);
-
-        let figma_category: String = row.try_get("category")?;
-        let figma_category =
-            FigmaCategory::from_str(&figma_category).unwrap_or(FigmaCategory::Unknown);
-
-        let category: Vec<String> = row.try_get("search_categories")?;
-        let category: Vec<Category> = category
-            .into_iter()
-            .map(|s| Category::from_str(&s).unwrap_or(Category::Unknown))
-            .collect();
-
-        let tags: Vec<String> = row.try_get("tags")?;
-        let notes: Option<String> = row.try_get("notes")?;
-        let released_at: Option<f64> = row.try_get("released_at")?;
-        let last_updated_at: Option<f64> = row.try_get("last_updated_at")?;
-        let deprecated_at: Option<f64> = row.try_get("deprecated_at")?;
-        let published: bool = row.try_get("published")?;
-        let alias: Option<String> = row.try_get("alias")?;
-        let code: Option<i32> = row.try_get("code")?;
-
-        Ok(Icon {
-            id,
-            rid,
-            name,
-            alias,
-            code,
-            status,
-            search_categories: category,
-            category: figma_category,
-            tags,
-            notes,
-            released_at,
-            last_updated_at,
-            deprecated_at,
-            published,
-        })
+impl From<entities::icons::Model> for Icon {
+    fn from(model: entities::icons::Model) -> Self {
+        Icon {
+            id: model.id,
+            rid: model.rid,
+            name: model.name,
+            alias: model.alias,
+            code: model.code,
+            status: IconStatus::from_str(&model.status).unwrap_or_default(),
+            search_categories: model
+                .search_categories
+                .into_iter()
+                .map(|s| Category::from_str(&s).unwrap_or(Category::Unknown))
+                .collect(),
+            category: FigmaCategory::from_str(&model.category).unwrap_or(FigmaCategory::Unknown),
+            tags: model.tags,
+            notes: model.notes,
+            released_at: model.released_at,
+            last_updated_at: model.last_updated_at,
+            deprecated_at: model.deprecated_at,
+            published: model.published,
+        }
     }
 }
 
@@ -451,24 +429,12 @@ impl std::fmt::Display for Category {
     }
 }
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, FromQueryResult)]
 pub struct LibraryInfo {
     /// The current version of the library.
     #[schema(example = 2.1f64)]
     pub version: f64,
     /// The total number of published icons as of the current version.
     #[schema(example = 1512)]
-    pub count: usize,
-}
-
-impl FromRow<'_, PgRow> for LibraryInfo {
-    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
-        let version: f64 = row.try_get("version")?;
-        let count: i64 = row.try_get("count")?;
-
-        Ok(LibraryInfo {
-            version,
-            count: count as usize,
-        })
-    }
+    pub count: u64,
 }

@@ -1,297 +1,252 @@
-use crate::icons::{Category, Icon, IconStatus, IconWeight, LibraryInfo};
-use crate::svgs::Svg;
+use crate::entities::{icons, svgs};
+use crate::icons::{Category, IconStatus, LibraryInfo};
+use sea_orm::sea_query::OnConflict;
+use sea_orm::{
+    prelude::*, Condition, Database, DatabaseConnection, Order, QueryOrder, QuerySelect,
+};
 use serde::{Deserialize, Deserializer};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::{migrate::Migrator, Pool, Postgres, QueryBuilder};
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
 use utoipa::{IntoParams, ToSchema};
 
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
-
 #[derive(Debug)]
-pub struct Database {
-    pool: Pool<Postgres>,
+pub struct Db {
+    pub conn: DatabaseConnection,
 }
 
-impl Database {
+impl Db {
     #[tracing::instrument(level = "info")]
-    pub async fn init() -> Result<Self, sqlx::Error> {
+    pub async fn init() -> Result<Self, sea_orm::DbErr> {
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL not set");
-        let pool = PgPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_secs(4))
-            .max_connections(14)
-            .test_before_acquire(false)
-            .connect(&database_url)
-            .await?;
-
-        MIGRATOR.run(&pool).await?;
-
-        Ok(Database { pool })
+        let conn = Database::connect(database_url).await?;
+        Ok(Self { conn })
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn ping(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("SELECT 1").fetch_optional(&self.pool).await?;
-        Ok(())
+    pub async fn ping(&self) -> Result<(), DbErr> {
+        self.conn.ping().await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn dump_stats(&self) -> Result<(), sqlx::Error> {
-        tracing::info!(
-            "Pool stats: total={}, idle={}, used={}",
-            self.pool.size(),
-            self.pool.num_idle(),
-            self.pool.size() as usize - self.pool.num_idle(),
-        );
+    pub async fn dump_stats(&self) -> Result<(), ()> {
+        tracing::info!("Conn: {:?}", self.conn);
         Ok(())
     }
 
-    #[tracing::instrument(level = "info", skip(init))]
-    fn build_query_from_params(
-        init: impl Into<String>,
-        query: &IconQuery,
-        orderable: bool,
-    ) -> QueryBuilder<'_, Postgres> {
-        let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(init);
-        builder.push(" WHERE ");
+    #[tracing::instrument(level = "info")]
+    fn build_condition_from_params(query: &IconQuery) -> Condition {
+        let mut cond = Condition::all();
 
-        match query.published {
-            Some(Ternary::True) | None => {
-                builder.push("published = TRUE");
-            }
-            Some(Ternary::False) => {
-                builder.push("published = FALSE");
-            }
-            Some(Ternary::Any) => {
-                builder.push("published IS NOT NULL");
+        if let Some(name) = &query.name {
+            cond = cond.add(icons::Column::Name.eq(name));
+        }
+
+        if let Some(published) = &query.published {
+            match published {
+                Ternary::True => cond = cond.add(icons::Column::Published.eq(true)),
+                Ternary::False => cond = cond.add(icons::Column::Published.eq(false)),
+                Ternary::Any => {}
             }
         }
 
-        if let Some(name) = query.name.as_ref() {
-            builder.push(" AND ");
-            builder.push("name = ").push_bind(name);
-        }
-
-        if let Some(status) = query.status.as_ref() {
-            if !status.is_empty() {
-                builder.push(" AND ");
-                builder.push("status IN ");
-
-                let mut list = builder.separated(", ");
-                list.push_unseparated("(");
-                for status in status {
-                    list.push_bind(status.to_string());
-                }
-                list.push_unseparated(")");
-            }
-        }
-
-        if let Some(category) = query.category.as_ref() {
-            if !category.is_empty() {
-                let category = category.iter().map(|c| c.to_string()).collect::<Vec<_>>();
-                builder.push(" AND ");
-                builder.push("search_categories && ").push_bind(category);
-            }
-        }
-
-        if let Some(tags) = query.tags.as_ref() {
-            if !tags.is_empty() {
-                builder.push(" AND ");
-                builder.push("tags && ").push_bind(tags);
-            }
-        }
-
-        if let Some(release) = query.released.as_ref() {
-            builder.push(" AND ");
-            match release {
+        if let Some(released) = &query.released {
+            match released {
                 IconReleaseQuery::Exact(v) => {
-                    builder.push("released_at = ").push_bind(v);
+                    cond = cond.add(icons::Column::ReleasedAt.eq(*v));
                 }
                 IconReleaseQuery::Range(a, b) => {
-                    builder
-                        .push("released_at BETWEEN ")
-                        .push_bind(a)
-                        .push(" AND ")
-                        .push_bind(b);
+                    cond = cond.add(icons::Column::ReleasedAt.between(*a, *b));
                 }
                 IconReleaseQuery::LessThanOrEqual(v) => {
-                    builder.push("released_at <= ").push_bind(v);
+                    cond = cond.add(icons::Column::ReleasedAt.lte(*v));
                 }
                 IconReleaseQuery::GraterThanOrEqual(v) => {
-                    builder.push("released_at >= ").push_bind(v);
+                    cond = cond.add(icons::Column::ReleasedAt.gte(*v));
                 }
             }
         }
 
-        if orderable {
-            let dir = query.dir.unwrap_or_default();
-            match query.order {
-                None | Some(OrderColumn::Name) => {
-                    builder.push(format!(" ORDER BY name {}", dir));
+        if let Some(updated) = &query.updated {
+            match updated {
+                IconReleaseQuery::Exact(v) => {
+                    cond = cond.add(icons::Column::LastUpdatedAt.eq(*v));
                 }
-                Some(OrderColumn::Status) => {
-                    builder.push(format!(" ORDER BY status {}", dir));
+                IconReleaseQuery::Range(a, b) => {
+                    cond = cond.add(icons::Column::LastUpdatedAt.between(*a, *b));
                 }
-                Some(OrderColumn::Release) => {
-                    builder.push(format!(" ORDER BY released_at {}", dir));
+                IconReleaseQuery::LessThanOrEqual(v) => {
+                    cond = cond.add(icons::Column::LastUpdatedAt.lte(*v));
                 }
-                Some(OrderColumn::Code) => {
-                    builder.push(format!(" ORDER BY code {}", dir));
+                IconReleaseQuery::GraterThanOrEqual(v) => {
+                    cond = cond.add(icons::Column::LastUpdatedAt.gte(*v));
                 }
             }
         }
 
-        builder
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<Icon>, sqlx::Error> {
-        let mut builder = Self::build_query_from_params("SELECT * FROM icons", query, true);
-        builder.build_query_as::<Icon>().fetch_all(&self.pool).await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn count_icons(&self, query: &IconQuery) -> Result<i64, sqlx::Error> {
-        let mut builder = Self::build_query_from_params("SELECT COUNT(*) FROM icons", query, false);
-        builder
-            .build_query_scalar::<i64>()
-            .fetch_one(&self.pool)
-            .await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_icon_by_name(&self, name: &str) -> Result<Option<Icon>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM icons WHERE name = $1")
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn upsert_icon(&self, icon: &Icon) -> Result<Icon, sqlx::Error> {
-        sqlx::query_as(
-            r#"
-            INSERT INTO icons (rid, name, status, category, search_categories, tags, notes, released_at, last_updated_at, deprecated_at, published, alias, code) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
-            ON CONFLICT (rid)
-            DO UPDATE SET
-                name = EXCLUDED.name,
-                status = EXCLUDED.status,
-                category = EXCLUDED.category,
-                search_categories = EXCLUDED.search_categories,
-                tags = EXCLUDED.tags,
-                notes = EXCLUDED.notes,
-                released_at = EXCLUDED.released_at,
-                last_updated_at = EXCLUDED.last_updated_at,
-                deprecated_at = EXCLUDED.deprecated_at,
-                published = EXCLUDED.published,
-                alias = EXCLUDED.alias,
-                code = EXCLUDED.code
-            RETURNING *
-            "#,
-        )
-        .bind(&icon.rid)
-        .bind(&icon.name)
-        .bind(icon.status.to_string())
-        .bind(icon.category.to_string())
-        .bind(icon.search_categories.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        .bind(&icon.tags)
-        .bind(&icon.notes)
-        .bind(&icon.released_at)
-        .bind(&icon.last_updated_at)
-        .bind(&icon.deprecated_at)
-        .bind(icon.published)
-        .bind(&icon.alias)
-        .bind(icon.code)
-        .fetch_one(&self.pool)
-        .await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn delete_icon(&self, rid: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM icons WHERE rid = $1")
-            .bind(rid)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_icon_by_id(&self, id: i32) -> Result<Option<Icon>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM icons WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_icon_by_rid(&self, rid: &str) -> Result<Option<Icon>, sqlx::Error> {
-        sqlx::query_as("SELECT * FROM icons WHERE rid = $1")
-            .bind(rid)
-            .fetch_optional(&self.pool)
-            .await
-    }
-
-    #[tracing::instrument(level = "info", skip(self))]
-    pub async fn query_icons(
-        &self,
-        name: &str,
-        status: Option<&str>,
-        category: Option<&str>,
-    ) -> Result<Vec<Icon>, sqlx::Error> {
-        let mut query = "SELECT * FROM icons WHERE name ILIKE $1".to_string();
-        let mut params = vec![format!("%{}%", name)];
-
-        if let Some(status) = status {
-            query.push_str(" AND status = $2");
-            params.push(status.to_string());
+        if let Some(deprecated) = &query.deprecated {
+            match deprecated {
+                IconReleaseQuery::Exact(v) => {
+                    cond = cond.add(icons::Column::DeprecatedAt.eq(*v));
+                }
+                IconReleaseQuery::Range(a, b) => {
+                    cond = cond.add(icons::Column::DeprecatedAt.between(*a, *b));
+                }
+                IconReleaseQuery::LessThanOrEqual(v) => {
+                    cond = cond.add(icons::Column::DeprecatedAt.lte(*v));
+                }
+                IconReleaseQuery::GraterThanOrEqual(v) => {
+                    cond = cond.add(icons::Column::DeprecatedAt.gte(*v));
+                }
+            }
         }
 
-        if let Some(category) = category {
-            query.push_str(" AND category = $3");
-            params.push(category.to_string());
+        if let Some(status) = &query.status {
+            cond = cond.add(icons::Column::Status.is_in(status.iter().map(|s| s.to_string())));
         }
 
-        sqlx::query_as(&query)
-            .bind(params)
-            .fetch_all(&self.pool)
+        if let Some(category) = &query.category {
+            cond = cond.add(Expr::cust_with_values(
+                "search_categories && $1",
+                [category.iter().map(|c| c.to_string()).collect::<Vec<_>>()],
+            ));
+        }
+
+        if let Some(tags) = &query.tags {
+            cond = cond.add(Expr::cust_with_values("tags && $1", [tags.clone()]));
+        }
+
+        cond
+    }
+
+    #[tracing::instrument(level = "info")]
+    fn build_order_from_params(query: &IconQuery) -> (icons::Column, Order) {
+        let order_column = match query.order {
+            None | Some(OrderColumn::Name) => icons::Column::Name,
+            Some(OrderColumn::Status) => icons::Column::Status,
+            Some(OrderColumn::Release) => icons::Column::ReleasedAt,
+            Some(OrderColumn::Code) => icons::Column::Code,
+        };
+
+        let order_direction = match query.dir {
+            Some(OrderDirection::Asc) | None => Order::Asc,
+            Some(OrderDirection::Desc) => Order::Desc,
+        };
+
+        (order_column, order_direction)
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icons(&self, query: &IconQuery) -> Result<Vec<icons::Model>, DbErr> {
+        let cond = Self::build_condition_from_params(query);
+        let (ord, dir) = Self::build_order_from_params(query);
+        icons::Entity::find()
+            .filter(cond)
+            .order_by(ord, dir)
+            .all(&self.conn)
             .await
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn fuzzy_search_icons(&self, search: &IconSearch) -> Result<Vec<Icon>, sqlx::Error> {
-        let query = "SELECT * FROM icons WHERE name ILIKE $1".to_string();
-        let params = vec![format!("%{}%", &search.q)];
+    pub async fn count_icons(&self, query: &IconQuery) -> Result<u64, DbErr> {
+        let cond = Self::build_condition_from_params(query);
+        icons::Entity::find().filter(cond).count(&self.conn).await
+    }
 
-        let _: Vec<Icon> = sqlx::query_as(&query)
-            .bind(params)
-            .fetch_all(&self.pool)
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icon_by_name(&self, name: &str) -> Result<Option<icons::Model>, DbErr> {
+        icons::Entity::find()
+            .filter(icons::Column::Name.eq(name))
+            .one(&self.conn)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icon_by_id(&self, id: i32) -> Result<Option<icons::Model>, DbErr> {
+        icons::Entity::find()
+            .filter(icons::Column::Id.eq(id))
+            .one(&self.conn)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icon_by_rid(&self, rid: &str) -> Result<Option<icons::Model>, DbErr> {
+        icons::Entity::find()
+            .filter(icons::Column::Rid.eq(rid))
+            .one(&self.conn)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icon_by_code(&self, code: i32) -> Result<Option<icons::Model>, DbErr> {
+        icons::Entity::find()
+            .filter(icons::Column::Code.eq(code))
+            .one(&self.conn)
+            .await
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn upsert_icon(&self, icon: icons::Model) -> Result<i32, DbErr> {
+        let active_model: icons::ActiveModel = icon.into();
+        let res = icons::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::column(icons::Column::Rid)
+                    .update_column(icons::Column::Name)
+                    .update_column(icons::Column::Status)
+                    .update_column(icons::Column::Category)
+                    .update_column(icons::Column::SearchCategories)
+                    .update_column(icons::Column::Tags)
+                    .update_column(icons::Column::Notes)
+                    .update_column(icons::Column::ReleasedAt)
+                    .update_column(icons::Column::LastUpdatedAt)
+                    .update_column(icons::Column::DeprecatedAt)
+                    .update_column(icons::Column::Published)
+                    .update_column(icons::Column::Alias)
+                    .update_column(icons::Column::Code)
+                    .to_owned(),
+            )
+            .exec(&self.conn)
             .await?;
-
-        todo!("Implement fuzzy search");
+        Ok(res.last_insert_id)
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_all_tags(&self) -> Result<Vec<String>, sqlx::Error> {
-        #[derive(Debug, sqlx::FromRow)]
-        struct Tag(String);
-        let tags: Vec<Tag> =
-            sqlx::query_as("SELECT DISTINCT unnest(tags) AS tag FROM icons ORDER BY tag")
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(tags.into_iter().map(|t| t.0).collect())
+    pub async fn delete_icon(&self, rid: &str) -> Result<u64, DbErr> {
+        icons::Entity::delete_many()
+            .filter(icons::Column::Rid.eq(rid))
+            .exec(&self.conn)
+            .await
+            .map(|res| res.rows_affected)
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_svg_weights_by_icon_id(
+    pub async fn query_icons(&self, query: &IconSearch) -> Result<Vec<icons::Model>, DbErr> {
+        todo!("Implement query_icons with fuzzy search and relevance");
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_all_tags(&self) -> Result<Vec<String>, DbErr> {
+        icons::Entity::find()
+            .select_only()
+            .column(icons::Column::Tags)
+            .all(&self.conn)
+            .await
+            .map(|models| {
+                models
+                    .into_iter()
+                    .flat_map(|model| model.tags)
+                    .collect::<Vec<_>>()
+            })
+    }
+
+    #[tracing::instrument(level = "info", skip(self))]
+    pub async fn get_icon_weights_by_icon_id(
         &self,
         icon_id: i32,
-    ) -> Result<HashMap<IconWeight, Svg>, sqlx::Error> {
-        let svgs: Vec<Svg> = sqlx::query_as("SELECT * FROM svgs WHERE icon_id = $1")
-            .bind(icon_id)
-            .fetch_all(&self.pool)
+    ) -> Result<HashMap<String, svgs::Model>, DbErr> {
+        let svgs: Vec<svgs::Model> = svgs::Entity::find()
+            .filter(svgs::Column::IconId.eq(icon_id))
+            .all(&self.conn)
             .await?;
 
         Ok(svgs
@@ -301,28 +256,35 @@ impl Database {
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn upsert_svg(&self, svg: &Svg) -> Result<Svg, sqlx::Error> {
-        sqlx::query_as(
-            r#"
-            INSERT INTO svgs (icon_id, weight, src) VALUES ($1, $2, $3)
-            ON CONFLICT (icon_id, weight)
-            DO UPDATE SET
-                weight = EXCLUDED.weight
-            RETURNING *
-            "#,
-        )
-        .bind(&svg.icon_id)
-        .bind(svg.weight.to_string())
-        .bind(&svg.src)
-        .fetch_one(&self.pool)
-        .await
+    pub async fn upsert_svg(&self, svg: svgs::Model) -> Result<i32, DbErr> {
+        let active_model: svgs::ActiveModel = svg.into();
+        let res = svgs::Entity::insert(active_model)
+            .on_conflict(
+                OnConflict::columns(vec![svgs::Column::IconId, svgs::Column::Weight])
+                    .update_column(svgs::Column::Src)
+                    .to_owned(),
+            )
+            .exec(&self.conn)
+            .await?;
+        Ok(res.last_insert_id)
     }
 
     #[tracing::instrument(level = "info", skip(self))]
-    pub async fn get_library_info(&self) -> Result<LibraryInfo, sqlx::Error> {
-        sqlx::query_as("SELECT COUNT(*) as count, MAX(released_at) as version FROM icons WHERE published = TRUE")
-            .fetch_one(&self.pool)
+    pub async fn get_library_info(&self) -> Result<LibraryInfo, DbErr> {
+        icons::Entity::find()
+            .select_only()
+            .column_as(Expr::col(icons::Column::Id).count(), "count")
+            .column_as(Expr::col(icons::Column::ReleasedAt).max(), "version")
+            .filter(icons::Column::Published.eq(true))
+            .into_model::<LibraryInfo>()
+            .one(&self.conn)
             .await
+            .map(|opt| {
+                opt.unwrap_or_else(|| LibraryInfo {
+                    count: 0,
+                    version: 0.0,
+                })
+            })
     }
 }
 
@@ -363,7 +325,7 @@ pub struct IconQuery {
     )]
     pub updated: Option<IconReleaseQuery>,
     #[serde(skip)]
-    pub deprecated: Option<bool>,
+    pub deprecated: Option<IconReleaseQuery>,
     /// Filter search results by one or more comma-separated release statuses.
     #[serde(default, deserialize_with = "deserialize_csv")]
     #[param(explode = false)]
@@ -420,7 +382,7 @@ impl IconQuery {
         self
     }
 
-    pub fn deprecated(mut self, deprecated: bool) -> Self {
+    pub fn deprecated(mut self, deprecated: IconReleaseQuery) -> Self {
         self.deprecated = Some(deprecated);
         self
     }

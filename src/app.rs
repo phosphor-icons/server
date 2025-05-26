@@ -4,13 +4,13 @@ use tokio::fs;
 
 #[derive(Debug)]
 pub struct AppState {
-    pub db: Mutex<db::Database>,
+    pub db: Mutex<db::Db>,
 }
 
 impl AppState {
     #[tracing::instrument(level = "info")]
     pub async fn init() -> Result<Self, std::io::Error> {
-        let db = db::Database::init().await.map_err(|_| {
+        let db = db::Db::init().await.map_err(|_| {
             tracing::error!("Failed to initialize database");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to initialize database")
         })?;
@@ -42,15 +42,12 @@ impl AppState {
             tracing::error!("Failed to sync table client");
             std::io::Error::new(std::io::ErrorKind::Other, "Failed to sync table client")
         })?;
-
         let db = self.db.lock().unwrap();
         for icon in icons {
-            db.upsert_icon(&icons::Icon::from(icon.clone()))
-                .await
-                .map_err(|e| {
-                    tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
-                    std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
-                })?;
+            db.upsert_icon(icon.clone().into()).await.map_err(|e| {
+                tracing::error!("Failed to upsert icon: {:?}: {:?}", &icon, e);
+                std::io::Error::new(std::io::ErrorKind::Other, "Failed to upsert icon")
+            })?;
         }
 
         Ok(())
@@ -99,7 +96,7 @@ impl AppState {
                         weight: weight.clone(),
                         src: contents,
                     };
-                    db.upsert_svg(&svg).await.unwrap();
+                    db.upsert_svg(svg.clone().into()).await.unwrap();
                     tracing::info!("Upserted SVG: {} - {:?}", name, weight);
                 } else {
                     tracing::warn!("Icon not found in database: {}", name);
