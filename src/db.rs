@@ -228,6 +228,7 @@ impl Db {
 
     #[tracing::instrument(level = "info", skip(self))]
     pub async fn query_icons(&self, query: &IconSearch) -> Result<Vec<icons::Model>, DbErr> {
+        // TODO: Implement fuzzy search and relevance scoring
         todo!("Implement query_icons with fuzzy search and relevance");
     }
 

@@ -1,4 +1,8 @@
-use actix_web::{get, http, middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get, http,
+    middleware::{self, Logger},
+    web, App, HttpResponse, HttpServer, Responder,
+};
 use phosphor_server::app;
 use serde::Serialize;
 use std::{net::Ipv4Addr, time::Duration};
@@ -48,7 +52,14 @@ async fn main() -> Result<(), std::io::Error> {
         App::new()
             .into_utoipa_app()
             .app_data(data.clone())
-            .map(|app| app.wrap(Logger::default()))
+            .map(|app| {
+                app.wrap(
+                    middleware::DefaultHeaders::new()
+                        .add((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
+                        .add((http::header::ACCESS_CONTROL_MAX_AGE, 3600)),
+                )
+                .wrap(Logger::default())
+            })
             .service(
                 scope::scope("/v1")
                     .service(icons::icon)
@@ -208,9 +219,7 @@ mod icons {
         match data.db.get_icons(&query).await {
             Ok(icons) => {
                 let icons = icons.into_iter().map(icons::Icon::from).collect::<Vec<_>>();
-                HttpResponse::Ok()
-                    .insert_header((http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                    .json(MultipleIconResponse::new(icons))
+                HttpResponse::Ok().json(MultipleIconResponse::new(icons))
             }
             Err(e) => {
                 tracing::error!("Failed to fetch icons for query: {:?}", e);
